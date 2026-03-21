@@ -181,9 +181,9 @@ export default function DependencyGraph({
         d.fx = event.x;
         d.fy = event.y;
       })
-      .on('end', (event, d) => {
+      .on('end', (event) => {
         if (!event.active) simulation.alphaTarget(0);
-        // Keep d.fx/d.fy set so the node stays where the user placed it
+        // d.fx/d.fy remain set so the node stays where the user placed it
       });
 
     node.call(dragBehavior);
