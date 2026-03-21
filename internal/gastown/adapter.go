@@ -44,6 +44,23 @@ type Adapter interface {
 	Mail(ctx context.Context, address string) ([]Message, error)
 }
 
+// Agent status detection thresholds.
+const (
+	stuckThreshold = 10 * time.Minute // Active session with no activity → stuck
+	idleThreshold  = 2 * time.Minute  // Active session, no hook, no activity → idle
+)
+
+// Well-known file and directory names in Gas Town.
+const (
+	claudeDir    = ".claude"
+	beadsDir     = ".beads"
+	seanceFile   = "seance.json"
+	hookFile     = "hook.json"
+	moleculeFile = "molecule.json"
+	townFile     = "town.json"
+	daemonPID    = "daemon.pid"
+)
+
 // FSAdapter reads Gas Town state from the filesystem and gt CLI.
 type FSAdapter struct {
 	townRoot string
@@ -329,6 +346,26 @@ func (a *FSAdapter) Agents(ctx context.Context) ([]Agent, error) {
 	return agents, nil
 }
 
+// rawConvoyJSON is the intermediate type for unmarshalling gt convoy list output.
+// Extracted to avoid duplicating the struct for array vs single-object responses.
+type rawConvoyJSON struct {
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Status      string   `json:"status"`
+	Priority    string   `json:"priority,omitempty"`
+	Rig         string   `json:"rig,omitempty"`
+	Issues      []string `json:"issues"`
+	Progress    int      `json:"progress"`
+	Total       int      `json:"total"`
+	Completed   int      `json:"completed"`
+	Blocked     int      `json:"blocked"`
+	InProgress  int      `json:"in_progress"`
+	CreatedAt   string   `json:"created_at,omitempty"`
+	UpdatedAt   string   `json:"updated_at,omitempty"`
+	Subscribers []string `json:"subscribers,omitempty"`
+	Agents      []string `json:"agents,omitempty"`
+}
+
 // Convoys returns active convoys by running gt convoy list.
 func (a *FSAdapter) Convoys(ctx context.Context) ([]Convoy, error) {
 	// Try to run gt convoy list --json
@@ -340,43 +377,11 @@ func (a *FSAdapter) Convoys(ctx context.Context) ([]Convoy, error) {
 		return nil, nil
 	}
 
-	var rawConvoys []struct {
-		ID          string   `json:"id"`
-		Title       string   `json:"title"`
-		Status      string   `json:"status"`
-		Priority    string   `json:"priority,omitempty"`
-		Rig         string   `json:"rig,omitempty"`
-		Issues      []string `json:"issues"`
-		Progress    int      `json:"progress"`
-		Total       int      `json:"total"`
-		Completed   int      `json:"completed"`
-		Blocked     int      `json:"blocked"`
-		InProgress  int      `json:"in_progress"`
-		CreatedAt   string   `json:"created_at,omitempty"`
-		UpdatedAt   string   `json:"updated_at,omitempty"`
-		Subscribers []string `json:"subscribers,omitempty"`
-		Agents      []string `json:"agents,omitempty"`
-	}
+	var rawConvoys []rawConvoyJSON
 
 	if err := json.Unmarshal(output, &rawConvoys); err != nil {
 		// Try parsing as single convoy
-		var raw struct {
-			ID          string   `json:"id"`
-			Title       string   `json:"title"`
-			Status      string   `json:"status"`
-			Priority    string   `json:"priority,omitempty"`
-			Rig         string   `json:"rig,omitempty"`
-			Issues      []string `json:"issues"`
-			Progress    int      `json:"progress"`
-			Total       int      `json:"total"`
-			Completed   int      `json:"completed"`
-			Blocked     int      `json:"blocked"`
-			InProgress  int      `json:"in_progress"`
-			CreatedAt   string   `json:"created_at,omitempty"`
-			UpdatedAt   string   `json:"updated_at,omitempty"`
-			Subscribers []string `json:"subscribers,omitempty"`
-			Agents      []string `json:"agents,omitempty"`
-		}
+		var raw rawConvoyJSON
 		if err := json.Unmarshal(output, &raw); err != nil {
 			return nil, nil
 		}
@@ -498,7 +503,7 @@ func (a *FSAdapter) dirExists(path string) bool {
 }
 
 func (a *FSAdapter) readTownConfig() (*TownConfig, error) {
-	configPath := filepath.Join(a.townRoot, "mayor", "town.json")
+	configPath := filepath.Join(a.townRoot, "mayor", townFile)
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, err
@@ -533,7 +538,7 @@ func (a *FSAdapter) getTmuxSessions() map[string]bool {
 
 func (a *FSAdapter) daemonRunning() bool {
 	// Check if gt daemon is running by looking for pid file or process
-	pidFile := filepath.Join(a.townRoot, "mayor", "daemon.pid")
+	pidFile := filepath.Join(a.townRoot, "mayor", daemonPID)
 	if _, err := os.Stat(pidFile); err == nil {
 		return true
 	}
@@ -606,7 +611,7 @@ func (a *FSAdapter) enrichAgent(agent *Agent, sessions map[string]bool) {
 	}
 
 	// Read seance file for compaction level
-	seancePath := filepath.Join(workDir, ".claude", "seance.json")
+	seancePath := filepath.Join(workDir, claudeDir, seanceFile)
 	if data, err := os.ReadFile(seancePath); err == nil {
 		var seance struct {
 			Compaction int    `json:"compaction"`
@@ -621,7 +626,7 @@ func (a *FSAdapter) enrichAgent(agent *Agent, sessions map[string]bool) {
 	}
 
 	// Check hook for attached molecule
-	hookPath := filepath.Join(workDir, ".claude", "hook.json")
+	hookPath := filepath.Join(workDir, claudeDir, hookFile)
 	if data, err := os.ReadFile(hookPath); err == nil {
 		var hook struct {
 			Molecule string `json:"molecule,omitempty"`
@@ -636,7 +641,7 @@ func (a *FSAdapter) enrichAgent(agent *Agent, sessions map[string]bool) {
 	}
 
 	// Also check molecule.json directly
-	molPath := filepath.Join(workDir, ".beads", "molecule.json")
+	molPath := filepath.Join(workDir, beadsDir, moleculeFile)
 	if data, err := os.ReadFile(molPath); err == nil {
 		var mol struct {
 			ID    string `json:"id"`
@@ -655,9 +660,9 @@ func (a *FSAdapter) enrichAgent(agent *Agent, sessions map[string]bool) {
 
 	// Detect stuck status: active session but no activity for 10+ minutes
 	if agent.Status == StatusActive && !agent.LastActive.IsZero() {
-		if time.Since(agent.LastActive) > 10*time.Minute {
+		if time.Since(agent.LastActive) > stuckThreshold {
 			agent.Status = StatusStuck
-		} else if time.Since(agent.LastActive) > 2*time.Minute && !agent.HookAttached {
+		} else if time.Since(agent.LastActive) > idleThreshold && !agent.HookAttached {
 			agent.Status = StatusIdle
 		}
 	}
