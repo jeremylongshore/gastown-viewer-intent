@@ -3,6 +3,7 @@ dolt/
 dolt-access.lock
 
 # Runtime files
+daemon.lock
 bd.sock
 bd.sock.startlock
 sync-state.json
@@ -36,6 +37,7 @@ dolt-monitor.pid
 
 # Backup data (auto-exported JSONL, local-only)
 backup/
+*.backup
 
 # Legacy files (from pre-Dolt versions)
 *.db
