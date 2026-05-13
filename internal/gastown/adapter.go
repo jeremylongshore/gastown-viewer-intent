@@ -52,7 +52,11 @@ type FSAdapter struct {
 // NewFSAdapter creates a new filesystem-based adapter.
 func NewFSAdapter(townRoot string) *FSAdapter {
 	if townRoot == "" {
-		townRoot = filepath.Join(os.Getenv("HOME"), "gt")
+		home := os.Getenv("HOME")
+		if home == "" {
+			home = os.Getenv("USERPROFILE") // Windows: HOME is not set
+		}
+		townRoot = filepath.Join(home, "gt")
 	}
 	return &FSAdapter{townRoot: townRoot}
 }
@@ -331,8 +335,11 @@ func (a *FSAdapter) Agents(ctx context.Context) ([]Agent, error) {
 
 // Convoys returns active convoys by running gt convoy list.
 func (a *FSAdapter) Convoys(ctx context.Context) ([]Convoy, error) {
+	// Use a short sub-timeout so a slow gt daemon doesn't block the whole response.
+	cCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	// Try to run gt convoy list --json
-	cmd := exec.CommandContext(ctx, "gt", "convoy", "list", "--json")
+	cmd := exec.CommandContext(cCtx, "gt", "convoy", "list", "--json")
 	cmd.Dir = a.townRoot
 	output, err := cmd.Output()
 	if err != nil {
@@ -469,8 +476,11 @@ func (a *FSAdapter) parseRawConvoy(id, title, status, priority, rig string,
 
 // Mail returns messages for an agent address.
 func (a *FSAdapter) Mail(ctx context.Context, address string) ([]Message, error) {
+	// Use a short sub-timeout so a slow gt daemon doesn't block the whole response.
+	mCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	// Run gt mail inbox for the address
-	cmd := exec.CommandContext(ctx, "gt", "mail", "inbox", "--json")
+	cmd := exec.CommandContext(mCtx, "gt", "mail", "inbox", "--json")
 	cmd.Dir = a.townRoot
 	cmd.Env = append(os.Environ(), fmt.Sprintf("GT_ROLE=%s", address))
 	output, err := cmd.Output()
@@ -515,17 +525,23 @@ func (a *FSAdapter) readTownConfig() (*TownConfig, error) {
 func (a *FSAdapter) getTmuxSessions() map[string]bool {
 	sessions := make(map[string]bool)
 
+	// Try tmux first (Linux/macOS)
 	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
-	output, err := cmd.Output()
-	if err != nil {
+	if output, err := cmd.Output(); err == nil {
+		for _, line := range strings.Split(string(output), "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				sessions[line] = true
+			}
+		}
 		return sessions
 	}
 
-	for _, line := range strings.Split(string(output), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			sessions[line] = true
-		}
+	// Windows/no-tmux fallback: check daemon/state.json to see if the gt system is running.
+	// This is a fast file stat (no subprocess). If the daemon is up, enrichAgent will
+	// use workdir modification times to approximate agent activity.
+	statePath := filepath.Join(a.townRoot, "daemon", "state.json")
+	if _, err := os.Stat(statePath); err == nil {
+		sessions["__windows_claude_running__"] = true
 	}
 
 	return sessions
@@ -598,9 +614,17 @@ func (a *FSAdapter) enrichAgent(agent *Agent, sessions map[string]bool) {
 	sessionName := a.getSessionName(agent)
 	agent.Session = sessionName
 
-	// Check if session is active
+	// Check if session is active (tmux on Linux/macOS, file-based on Windows)
 	if sessions[sessionName] {
 		agent.Status = StatusActive
+	} else if sessions["__windows_claude_running__"] {
+		// Windows: claude.exe is running; stat workDir directly for liveness.
+		// Active = workdir modified within last 30 minutes.
+		if info, err := os.Stat(workDir); err == nil && time.Since(info.ModTime()) < 30*time.Minute {
+			agent.Status = StatusActive
+		} else {
+			agent.Status = StatusOffline
+		}
 	} else {
 		agent.Status = StatusOffline
 	}
