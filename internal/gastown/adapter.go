@@ -11,6 +11,23 @@ import (
 	"time"
 )
 
+const (
+	// sentinelWindowsClaudeRunning is the synthetic session key getTmuxSessions inserts
+	// when tmux is unavailable but the gt daemon state file is present. enrichAgent
+	// checks for this key to switch to file-mtime-based liveness detection.
+	sentinelWindowsClaudeRunning = "__windows_claude_running__"
+
+	// gastownCommandTimeout caps any out-of-process gt CLI call so a hung Dolt
+	// connection cannot block the calling HTTP handler indefinitely.
+	gastownCommandTimeout = 5 * time.Second
+
+	// windowsActivityThreshold is the file-mtime window inside which an agent's
+	// workDir is considered active when tmux is unavailable. Aligned with the
+	// project's stuck-detection threshold so the same agent is never simultaneously
+	// "active" here and "stuck" elsewhere.
+	windowsActivityThreshold = 10 * time.Minute
+)
+
 // Adapter provides access to Gas Town data.
 type Adapter interface {
 	// Status returns the overall town health status.
@@ -50,13 +67,18 @@ type FSAdapter struct {
 }
 
 // NewFSAdapter creates a new filesystem-based adapter.
+//
+// When townRoot is empty, the home directory is resolved via os.UserHomeDir(),
+// which handles HOME on Linux/macOS and USERPROFILE / HOMEDRIVE+HOMEPATH on
+// Windows, plus an /etc/passwd lookup fallback on Linux. If even that fails
+// (rare: containers with no env and no passwd entry), townRoot is left empty
+// so downstream calls fail predictably via townExists() rather than silently
+// constructing a relative "gt" path.
 func NewFSAdapter(townRoot string) *FSAdapter {
 	if townRoot == "" {
-		home := os.Getenv("HOME")
-		if home == "" {
-			home = os.Getenv("USERPROFILE") // Windows: HOME is not set
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			townRoot = filepath.Join(home, "gt")
 		}
-		townRoot = filepath.Join(home, "gt")
 	}
 	return &FSAdapter{townRoot: townRoot}
 }
@@ -336,7 +358,7 @@ func (a *FSAdapter) Agents(ctx context.Context) ([]Agent, error) {
 // Convoys returns active convoys by running gt convoy list.
 func (a *FSAdapter) Convoys(ctx context.Context) ([]Convoy, error) {
 	// Use a short sub-timeout so a slow gt daemon doesn't block the whole response.
-	cCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	cCtx, cancel := context.WithTimeout(ctx, gastownCommandTimeout)
 	defer cancel()
 	// Try to run gt convoy list --json
 	cmd := exec.CommandContext(cCtx, "gt", "convoy", "list", "--json")
@@ -477,7 +499,7 @@ func (a *FSAdapter) parseRawConvoy(id, title, status, priority, rig string,
 // Mail returns messages for an agent address.
 func (a *FSAdapter) Mail(ctx context.Context, address string) ([]Message, error) {
 	// Use a short sub-timeout so a slow gt daemon doesn't block the whole response.
-	mCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	mCtx, cancel := context.WithTimeout(ctx, gastownCommandTimeout)
 	defer cancel()
 	// Run gt mail inbox for the address
 	cmd := exec.CommandContext(mCtx, "gt", "mail", "inbox", "--json")
@@ -541,7 +563,7 @@ func (a *FSAdapter) getTmuxSessions() map[string]bool {
 	// use workdir modification times to approximate agent activity.
 	statePath := filepath.Join(a.townRoot, "daemon", "state.json")
 	if _, err := os.Stat(statePath); err == nil {
-		sessions["__windows_claude_running__"] = true
+		sessions[sentinelWindowsClaudeRunning] = true
 	}
 
 	return sessions
@@ -559,6 +581,37 @@ func (a *FSAdapter) daemonRunning() bool {
 	cmd.Dir = a.townRoot
 	err := cmd.Run()
 	return err == nil
+}
+
+// latestActivity returns how long ago the most recently-modified entry in dir
+// was touched, measured against now. Walks one level deep — the dir itself plus
+// its immediate children — which is enough to catch .claude/seance.json updates
+// from a long-running Claude session that doesn't change the dir's own mtime.
+// Returns a very large duration if dir cannot be read so callers treat it as
+// "not recent" rather than "active just now".
+func latestActivity(dir string, now time.Time) time.Duration {
+	stale := 1000 * time.Hour
+
+	info, err := os.Stat(dir)
+	if err != nil {
+		return stale
+	}
+	newest := info.ModTime()
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return now.Sub(newest)
+	}
+	for _, e := range entries {
+		ei, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if ei.ModTime().After(newest) {
+			newest = ei.ModTime()
+		}
+	}
+	return now.Sub(newest)
 }
 
 // LastActivity returns the last modification time of agent's workspace.
@@ -617,10 +670,13 @@ func (a *FSAdapter) enrichAgent(agent *Agent, sessions map[string]bool) {
 	// Check if session is active (tmux on Linux/macOS, file-based on Windows)
 	if sessions[sessionName] {
 		agent.Status = StatusActive
-	} else if sessions["__windows_claude_running__"] {
-		// Windows: claude.exe is running; stat workDir directly for liveness.
-		// Active = workdir modified within last 30 minutes.
-		if info, err := os.Stat(workDir); err == nil && time.Since(info.ModTime()) < 30*time.Minute {
+	} else if sessions[sentinelWindowsClaudeRunning] {
+		// Windows fallback: tmux is unavailable, so use file-mtime liveness on workDir.
+		// os.Stat on a directory alone is unreliable because POSIX dir mtime only updates
+		// on entry add/remove — a long-running agent rewriting .claude/seance.json without
+		// adding new entries would appear stale. Walk one level into workDir and use the
+		// newest entry's mtime, capturing the dir itself as a floor.
+		if latestActivity(workDir, time.Now()) < windowsActivityThreshold {
 			agent.Status = StatusActive
 		} else {
 			agent.Status = StatusOffline
