@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestFSAdapter_Status_NoTown(t *testing.T) {
@@ -119,4 +120,47 @@ func TestNewFSAdapter_DefaultPath(t *testing.T) {
 	if status.TownRoot != expected {
 		t.Errorf("Expected default path %s, got %s", expected, status.TownRoot)
 	}
+}
+
+func TestLatestActivity(t *testing.T) {
+	now := time.Now()
+
+	t.Run("missing dir returns very stale", func(t *testing.T) {
+		got := latestActivity("/tmp/nonexistent-gastown-test-dir", now)
+		if got < 999*time.Hour {
+			t.Errorf("missing dir should be reported as very stale, got %v", got)
+		}
+	})
+
+	t.Run("empty dir uses dir mtime", func(t *testing.T) {
+		dir := t.TempDir()
+		past := now.Add(-15 * time.Minute)
+		if err := os.Chtimes(dir, past, past); err != nil {
+			t.Fatalf("chtimes: %v", err)
+		}
+		got := latestActivity(dir, now)
+		if got < 14*time.Minute || got > 16*time.Minute {
+			t.Errorf("expected ~15m, got %v", got)
+		}
+	})
+
+	t.Run("newer child file shadows older dir mtime", func(t *testing.T) {
+		// This is the scenario CodeRabbit flagged: dir mtime stale because no
+		// add/remove, but a long-running agent rewrote a file inside it.
+		dir := t.TempDir()
+		oldDir := now.Add(-30 * time.Minute)
+		if err := os.Chtimes(dir, oldDir, oldDir); err != nil {
+			t.Fatalf("chtimes dir: %v", err)
+		}
+		child := filepath.Join(dir, "seance.json")
+		if err := os.WriteFile(child, []byte("{}"), 0o644); err != nil {
+			t.Fatalf("write child: %v", err)
+		}
+		// os.WriteFile sets mtime to ~now; verify the helper picks it up over the
+		// stale dir mtime.
+		got := latestActivity(dir, now)
+		if got > 1*time.Minute {
+			t.Errorf("expected newest file to dominate, got %v (older than 1 min)", got)
+		}
+	})
 }
