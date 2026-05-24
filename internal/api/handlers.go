@@ -230,3 +230,57 @@ func handleAdapterError(w http.ResponseWriter, err error) {
 
 	writeError(w, http.StatusInternalServerError, "BD_ERROR", err.Error())
 }
+
+// handleMemories handles GET /api/v1/memories. Applies the
+// 005-PP-POLICY classification policy: every memory is rendered with
+// Class A and Class B redactions applied unless ?reveal=true is set.
+// Council Q2 architectural invariant — read-only-forever, no POST.
+func (s *Server) handleMemories(w http.ResponseWriter, r *http.Request) {
+	if !s.checkBeadsInitialized(w, r) {
+		return
+	}
+	resp, err := s.adapter.Memories(r.Context())
+	if err != nil {
+		handleAdapterError(w, err)
+		return
+	}
+	reveal := r.URL.Query().Get("reveal") == "true"
+	resp.Memories = RedactMemories(resp.Memories, DefaultMemoryClassification, reveal)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleMemory handles GET /api/v1/memories/{key}. Same redaction
+// behavior as handleMemories — `?reveal=true` opts the engineer into the
+// full content.
+func (s *Server) handleMemory(w http.ResponseWriter, r *http.Request) {
+	if !s.checkBeadsInitialized(w, r) {
+		return
+	}
+	key := r.PathValue("key")
+	m, err := s.adapter.Memory(r.Context(), key)
+	if err != nil {
+		handleAdapterError(w, err)
+		return
+	}
+	reveal := r.URL.Query().Get("reveal") == "true"
+	RedactMemory(m, DefaultMemoryClassification, reveal)
+	writeJSON(w, http.StatusOK, m)
+}
+
+// handleMemoriesSearch handles GET /api/v1/memories/search?q=... . Same
+// shape as handleMemories. An empty query is treated as "list all" —
+// matches bd's own semantics.
+func (s *Server) handleMemoriesSearch(w http.ResponseWriter, r *http.Request) {
+	if !s.checkBeadsInitialized(w, r) {
+		return
+	}
+	query := r.URL.Query().Get("q")
+	resp, err := s.adapter.SearchMemories(r.Context(), query)
+	if err != nil {
+		handleAdapterError(w, err)
+		return
+	}
+	reveal := r.URL.Query().Get("reveal") == "true"
+	resp.Memories = RedactMemories(resp.Memories, DefaultMemoryClassification, reveal)
+	writeJSON(w, http.StatusOK, resp)
+}

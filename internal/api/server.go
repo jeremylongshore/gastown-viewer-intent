@@ -94,6 +94,13 @@ func (s *Server) registerRoutes() {
 	// Gas Town - Mail
 	s.mux.HandleFunc("GET /api/v1/town/mail/{address}", s.handleMail)
 
+	// Beads - Memories — READ-ONLY per AT-DECR Q2 architectural invariant.
+	// Zero state-mutating endpoints under /api/v1/memories/* by design.
+	// Redaction applied per 000-docs/005-PP-POLICY-memories-classification-2026-05-24.md.
+	s.mux.HandleFunc("GET /api/v1/memories", s.handleMemories)
+	s.mux.HandleFunc("GET /api/v1/memories/search", s.handleMemoriesSearch)
+	s.mux.HandleFunc("GET /api/v1/memories/{key}", s.handleMemory)
+
 	// Static files — catch-all after API routes
 	s.serveStaticFiles()
 }

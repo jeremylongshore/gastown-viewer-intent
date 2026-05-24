@@ -22,6 +22,22 @@ type Adapter interface {
 	// Graph returns the dependency graph.
 	Graph(ctx context.Context) (*model.Graph, error)
 
+	// Memories returns every entry in the bd persistent memory layer, sorted
+	// by key. Read-only — there is no write counterpart on this interface
+	// because Council Q2 fixed the memories panel as a read-only mirror
+	// (see 000-docs/004-AT-DECR-... Q2 architectural invariant). The bd
+	// CLI remains the canonical writer.
+	Memories(ctx context.Context) (*model.MemoriesResponse, error)
+
+	// Memory recalls a single memory by key. Returns NotFoundError when the
+	// key does not exist.
+	Memory(ctx context.Context, key string) (*model.Memory, error)
+
+	// SearchMemories returns memories whose content matches the query
+	// substring (bd's `bd memories <query> --json` semantics). Same
+	// response shape as Memories.
+	SearchMemories(ctx context.Context, query string) (*model.MemoriesResponse, error)
+
 	// IsInitialized checks if beads is initialized in the current directory.
 	IsInitialized(ctx context.Context) (bool, error)
 
@@ -270,4 +286,71 @@ func (a *CLIAdapter) Version(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return ParseVersion(output), nil
+}
+
+// Memories implements Adapter.Memories by shelling `bd memories --json`.
+// Returns a non-nil response with an empty Memories slice when no memories
+// exist (bd 1.0.4 emits `{"schema_version": 1}` in that case).
+func (a *CLIAdapter) Memories(ctx context.Context) (*model.MemoriesResponse, error) {
+	output, err := a.executor.Execute(ctx, a.workDir, "memories", "--json")
+	if err != nil {
+		return nil, err
+	}
+	memories, schemaVersion, err := ParseMemories(output)
+	if err != nil {
+		return nil, &ParseError{Command: "memories", Err: err}
+	}
+	return &model.MemoriesResponse{
+		Memories:      memories,
+		Count:         len(memories),
+		SchemaVersion: schemaVersion,
+	}, nil
+}
+
+// Memory implements Adapter.Memory by shelling `bd memories <key> --json`
+// then picking the matching entry. The `bd recall` subcommand emits raw
+// text, not JSON, so it isn't useful as a single-entry retrieval path;
+// the search variant + key filter is the cleanest read against the
+// bd 1.0.4 surface.
+func (a *CLIAdapter) Memory(ctx context.Context, key string) (*model.Memory, error) {
+	if key == "" {
+		return nil, &NotFoundError{ID: key}
+	}
+	output, err := a.executor.Execute(ctx, a.workDir, "memories", key, "--json")
+	if err != nil {
+		return nil, err
+	}
+	memories, _, err := ParseMemories(output)
+	if err != nil {
+		return nil, &ParseError{Command: "memories", Err: err}
+	}
+	for i := range memories {
+		if memories[i].Key == key {
+			m := memories[i]
+			return &m, nil
+		}
+	}
+	return nil, &NotFoundError{ID: key}
+}
+
+// SearchMemories implements Adapter.SearchMemories by shelling
+// `bd memories <query> --json`. Same response shape as Memories.
+func (a *CLIAdapter) SearchMemories(ctx context.Context, query string) (*model.MemoriesResponse, error) {
+	args := []string{"memories", "--json"}
+	if query != "" {
+		args = []string{"memories", query, "--json"}
+	}
+	output, err := a.executor.Execute(ctx, a.workDir, args...)
+	if err != nil {
+		return nil, err
+	}
+	memories, schemaVersion, err := ParseMemories(output)
+	if err != nil {
+		return nil, &ParseError{Command: "memories", Err: err}
+	}
+	return &model.MemoriesResponse{
+		Memories:      memories,
+		Count:         len(memories),
+		SchemaVersion: schemaVersion,
+	}, nil
 }

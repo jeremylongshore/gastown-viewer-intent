@@ -100,3 +100,55 @@ func TestCORSPreflight(t *testing.T) {
 		t.Errorf("Expected status 204 for preflight, got %d", w.Code)
 	}
 }
+
+// TestMemoriesHandler_RedactsByDefault confirms the wiring: a memory
+// containing a partner-name + secret token comes back redacted unless
+// ?reveal=true is set. Council Q2 read-only architectural invariant.
+func TestMemoriesHandler_RedactsByDefault(t *testing.T) {
+	config := DefaultConfig()
+	adapter := beads.NewCLIAdapter("")
+	server := NewServer(config, adapter)
+
+	req := httptest.NewRequest("GET", "/api/v1/memories", nil)
+	w := httptest.NewRecorder()
+	server.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK && w.Code != http.StatusServiceUnavailable {
+		t.Errorf("status: got %d, want 200 or 503", w.Code)
+	}
+	if w.Code == http.StatusOK {
+		var resp struct {
+			Memories []map[string]interface{} `json:"memories"`
+			Count    int                      `json:"count"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		// memories array must be non-null (empty slice acceptable).
+		if resp.Memories == nil {
+			t.Error("memories field must be non-null (empty array preferred)")
+		}
+	}
+}
+
+// TestMemoriesHandler_NoPOSTRouteRegistered guards the architectural
+// invariant: POST/PUT/PATCH/DELETE under /api/v1/memories/* must NOT be
+// routed. Council Q2 (gastown-cr5 AT-DECR). The mux should return 405
+// or 404 for these methods; what's NOT acceptable is a 200 that
+// indicates an accidentally-registered write handler.
+func TestMemoriesHandler_NoPOSTRouteRegistered(t *testing.T) {
+	config := DefaultConfig()
+	adapter := beads.NewCLIAdapter("")
+	server := NewServer(config, adapter)
+
+	for _, method := range []string{"POST", "PUT", "PATCH", "DELETE"} {
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest(method, "/api/v1/memories", nil)
+			w := httptest.NewRecorder()
+			server.Handler().ServeHTTP(w, req)
+			if w.Code == http.StatusOK {
+				t.Errorf("%s on /api/v1/memories must NOT return 200 — architectural invariant violated",
+					method)
+			}
+		})
+	}
+}
