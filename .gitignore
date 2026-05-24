@@ -44,6 +44,10 @@ yarn-error.log*
 .lycheecache
 .vale/styles/
 
+# Python bytecode (from scripts/)
+__pycache__/
+*.pyc
+
 # Orphan root web stubs (web/ is the real Vite project home)
 /node_modules/
 /package.json
