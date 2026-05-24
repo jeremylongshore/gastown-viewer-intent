@@ -119,7 +119,7 @@ func TestIsLoopbackHost(t *testing.T) {
 		{"127.0.0.42", true, "127.0.0.0/8 loopback range"},
 		{"::1", true, "IPv6 loopback"},
 		{"[::1]", true, "bracketed IPv6 loopback"},
-		{"", true, "empty host means listener default — allowed"},
+		{"", false, "empty host binds 0.0.0.0 in net/http — MUST reject (PR #12 Gemini security finding)"},
 		{"0.0.0.0", false, "bind-all IPv4 — must reject"},
 		{"::", false, "bind-all IPv6 — must reject"},
 		{"192.168.1.10", false, "private LAN — must reject"},

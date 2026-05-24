@@ -84,7 +84,12 @@ func (t *SessionToken) Persist(path string) (string, error) {
 		os.Remove(tmpPath)
 		return "", fmt.Errorf("chmod temp token: %w", err)
 	}
-	if _, err := tmp.WriteString(t.raw + "\n"); err != nil {
+	// Write the raw token only — no trailing newline. Clients that read the
+	// file literally (cat, $(cat ~/.config/gvid/token), some shell exports)
+	// otherwise pick up the newline as part of the secret and the gate fails
+	// confusingly. extractToken applies TrimSpace defensively, but the
+	// canonical file format is the bare hex string.
+	if _, err := tmp.WriteString(t.raw); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
 		return "", fmt.Errorf("write temp token: %w", err)
@@ -122,23 +127,29 @@ func DefaultSessionTokenPath() (string, error) {
 
 // IsLoopbackHost reports whether the host string resolves to a loopback
 // address (127.0.0.0/8 or ::1) only. "localhost", "127.0.0.1", "::1", and
-// "[::1]" are accepted; "0.0.0.0", "::", and any non-loopback IP are
-// rejected. Hostnames other than "localhost" are conservatively rejected
-// rather than attempting DNS resolution — the daemon is local-first and
-// binding to a name that happens to resolve to a loopback IP today but a
-// public IP tomorrow is exactly the deployment surprise we want to avoid.
+// "[::1]" are accepted; "0.0.0.0", "::", any non-loopback IP, AND THE EMPTY
+// STRING are rejected.
+//
+// The empty-string rejection is the load-bearing one — net/http's
+// ListenAndServe with `Addr: ":7070"` (empty host) binds to ALL interfaces
+// (effectively 0.0.0.0), which is exactly the deployment surprise this
+// check exists to prevent. Treating "" as a loopback synonym would silently
+// re-enable network exposure. Per PR #12 Gemini security review 2026-05-24.
+//
+// Hostnames other than "localhost" are conservatively rejected rather than
+// attempting DNS resolution — binding to a name that happens to resolve
+// loopback today but public tomorrow is the same class of surprise.
 func IsLoopbackHost(host string) bool {
 	host = strings.TrimSpace(host)
 	host = strings.Trim(host, "[]")
-	switch host {
-	case "", "localhost":
+	if host == "localhost" {
 		return true
 	}
 	ip := net.ParseIP(host)
 	if ip == nil {
-		// Hostname other than "localhost" — reject. Resolving DNS here would
-		// let `gvid --host my-public-name.example` slip past a check that
-		// happens to resolve loopback today.
+		// Empty string AND any non-IP hostname other than "localhost" — reject.
+		// Empty would bind 0.0.0.0 in net/http; non-localhost names invite DNS
+		// drift.
 		return false
 	}
 	return ip.IsLoopback()
