@@ -42,8 +42,20 @@ LEGACY_6767_RE = re.compile(r"^6767-[a-z]?-?[A-Z]{2}-[A-Z]{4}-")
 # category code. Warn so existing repos can migrate; do not fail the gate.
 LEGACY_3LETTER_RE = re.compile(r"^[0-9]{3}[a-z]?-[A-Z]{2,4}-[a-z0-9-]+\.[a-z]{2,5}$")
 
-# Files at 000-docs/ root that are allowlisted regardless of pattern.
-ALLOWLIST_NAMES = frozenset({"README.md", "INDEX.md"})
+# Files allowlisted regardless of pattern. The docstring promises these are
+# skipped; we keep the implementation aligned defensively in case the validator
+# is ever pointed at a parent dir that contains repo-root meta files.
+ALLOWLIST_NAMES = frozenset({
+    "README.md",
+    "INDEX.md",
+    "CLAUDE.md",
+    "CONTRIBUTING.md",
+    "CHANGELOG.md",
+    "LICENSE.md",
+    "AGENTS.md",
+    "SECURITY.md",
+    "CODE_OF_CONDUCT.md",
+})
 
 
 def walk_docs(roots: Iterable[pathlib.Path]) -> Iterable[pathlib.Path]:
@@ -80,10 +92,14 @@ def validate_frontmatter(path: pathlib.Path) -> list[str]:
         return [f"{path}: not valid UTF-8 ({exc})"]
     if not text.startswith("---\n"):
         return errors  # no frontmatter; that is fine
-    end = text.find("\n---\n", 4)
-    if end == -1:
+    # Match the closing fence either as `\n---\n` (frontmatter followed by body)
+    # OR `\n---` at end-of-string (file ends exactly at the closing fence with
+    # no trailing newline). Without the EOS alternative, files like a stand-alone
+    # `---\nkey: value\n---` get rejected as missing-delimiter.
+    match = re.search(r"\n---\n|\n---\Z", text[4:])
+    if not match:
         return [f"{path}: opening --- but no closing --- delimiter"]
-    body = text[4:end]
+    body = text[4 : 4 + match.start()]
     # Minimal YAML parse — avoid PyYAML dep. Just confirm keys look like KEY: value
     # or list/object indent. Reject lines that contain only a stray colon-less token.
     for lineno, raw in enumerate(body.splitlines(), start=2):
