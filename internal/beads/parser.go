@@ -2,6 +2,7 @@ package beads
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 	"time"
 
@@ -255,19 +256,9 @@ func ParseMemories(data []byte) (memories []model.Memory, schemaVersion int, err
 	return memories, schemaVersion, nil
 }
 
-// sortMemoriesByKey is a small helper that keeps the import surface of
-// parser.go narrow. The sort is by ascending key so the UI sees a stable
-// alphabetical order across polls; ordering by content would be unstable
-// (content can change in place via `bd remember --key`).
+// sortMemoriesByKey sorts memories by ascending key so the UI sees a
+// stable alphabetical order across polls; ordering by content would be
+// unstable (content can change in place via `bd remember --key`).
 func sortMemoriesByKey(m []model.Memory) {
-	// Insertion sort is fine for the expected list size (memories are
-	// curated by humans; typical workspace has <100). Saves the
-	// dependency-line cost of importing sort for a single call site.
-	for i := 1; i < len(m); i++ {
-		j := i
-		for j > 0 && m[j-1].Key > m[j].Key {
-			m[j-1], m[j] = m[j], m[j-1]
-			j--
-		}
-	}
+	sort.Slice(m, func(i, j int) bool { return m[i].Key < m[j].Key })
 }

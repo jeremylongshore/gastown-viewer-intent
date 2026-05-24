@@ -2,6 +2,7 @@ package api
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/intent-solutions-io/gastown-viewer-intent/internal/model"
@@ -290,14 +291,7 @@ func sortedMarkers(set map[string]struct{}) []string {
 	for k := range set {
 		out = append(out, k)
 	}
-	// Stable order; len is small so insertion sort is fine.
-	for i := 1; i < len(out); i++ {
-		j := i
-		for j > 0 && out[j-1] > out[j] {
-			out[j-1], out[j] = out[j], out[j-1]
-			j--
-		}
-	}
+	sort.Strings(out)
 	return out
 }
 
