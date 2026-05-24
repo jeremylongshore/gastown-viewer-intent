@@ -322,16 +322,9 @@ func TestHumanFlags_ParsesIssues(t *testing.T) {
 	}
 }
 
-func TestHumanFlags_EmptyOnEmptyOutput(t *testing.T) {
-	mock := NewMockExecutor()
-	mock.SetResponse("human list --json", []byte(`   `))
-	adapter := NewCLIAdapterWithExecutor("", mock)
-
-	flags, err := adapter.HumanFlags(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(flags) != 0 {
-		t.Errorf("expected empty slice on whitespace-only output, got %d", len(flags))
-	}
-}
+// (TestHumanFlags_EmptyOnEmptyOutput removed: the whitespace-only-output
+// defense was speculative — real bd 1.0.4 emits either "null" or a valid
+// JSON array, both of which json.Unmarshal handles natively. Per PR #13
+// Gemini review 2026-05-24, the manual null/whitespace check was
+// redundant against the stdlib + the empty-data fast path in
+// ParseIssueList. The simpler path is preferred.)

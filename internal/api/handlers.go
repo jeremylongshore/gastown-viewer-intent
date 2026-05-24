@@ -236,14 +236,17 @@ func handleAdapterError(w http.ResponseWriter, err error) {
 // handler does NOT call checkBeadsInitialized because a not-initialized
 // daemon should still respond with Health=unknown rather than 503'ing —
 // the whole point of the pill is to surface the desync condition.
+//
+// DoltSyncState's contract is "never errors" (failures are encoded as
+// Health=unknown in the body). We still defend against a Go error here
+// because the contract is a documented invariant, not a type-system
+// guarantee — a future bug that violates it should produce a 500 with a
+// useful body rather than a panic or empty response.
 func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 	state, err := s.adapter.DoltSyncState(r.Context())
 	if err != nil {
-		if beads.IsBDNotFoundError(err) {
-			writeError(w, http.StatusServiceUnavailable, "BD_NOT_FOUND", err.Error())
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "BD_ERROR", err.Error())
+		writeError(w, http.StatusInternalServerError, "BD_ERROR",
+			"DoltSyncState should not error per its contract; got: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, state)

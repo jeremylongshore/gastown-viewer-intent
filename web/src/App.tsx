@@ -49,7 +49,9 @@ function SyncPill({ state }: { state: DoltSyncState | null }) {
 
 // pillStyle maps a DoltHealth to the inline color tuple the SyncPill renders.
 // Kept inline (vs. .css) because the same colors are read by the JSX title
-// computation just above — co-locating reduces drift.
+// computation just above — co-locating reduces drift. The fallback to the
+// `unknown` palette handles the case where the server adds a new Health
+// value before the front-end ships matching colors (API drift defense).
 function pillStyle(health: DoltHealth): React.CSSProperties {
   const palette: Record<DoltHealth, { bg: string; fg: string }> = {
     green:   { bg: '#10b981', fg: '#ffffff' },
@@ -57,7 +59,7 @@ function pillStyle(health: DoltHealth): React.CSSProperties {
     red:     { bg: '#ef4444', fg: '#ffffff' },
     unknown: { bg: '#6b7280', fg: '#ffffff' },
   };
-  const p = palette[health];
+  const p = palette[health] ?? palette.unknown;
   return {
     backgroundColor: p.bg,
     color: p.fg,

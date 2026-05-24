@@ -23,9 +23,14 @@ type Adapter interface {
 	Graph(ctx context.Context) (*model.Graph, error)
 
 	// DoltSyncState returns the composed dolt server + remote status used by
-	// the header sync pill. Errors are NOT returned for ordinary "dolt
-	// server not running" — that becomes Health=red in the response — only
-	// for bd-binary-missing or beads-uninitialized cases.
+	// the header sync pill. The implementation NEVER returns a Go error —
+	// every failure class (bd missing, beads uninitialized, JSON parse
+	// failure, remote-list error, server-down) is mapped to a
+	// DoltSyncState with the appropriate Health value (Unknown for I/O or
+	// parse failures, Red for server-down, Yellow for degraded remotes,
+	// Green for healthy). The (*DoltSyncState, error) signature is kept
+	// for interface symmetry with other methods, but callers SHOULD treat
+	// a non-nil error as a bug and the response body as authoritative.
 	DoltSyncState(ctx context.Context) (*model.DoltSyncState, error)
 
 	// HumanFlags lists every bead carrying the "human" label (issues an AI
@@ -338,17 +343,18 @@ func (a *CLIAdapter) DoltSyncState(ctx context.Context) (*model.DoltSyncState, e
 // HumanFlags implements Adapter.HumanFlags by shelling
 // `bd human list --json`. Returns a non-nil slice (possibly empty) so
 // callers and JSON encoders never need to defend against a null slice.
+//
+// Note: bd 1.0.4 emits the literal "null" when no issues are flagged, and
+// `json.Unmarshal` into a `[]BDIssue` correctly handles that by leaving
+// the slice nil. ParseIssueList also handles empty input. The
+// `make([]model.Issue, 0, len(bdIssues))` + empty range loop below
+// guarantees a non-nil empty slice in both cases; no manual null check
+// is required.
 func (a *CLIAdapter) HumanFlags(ctx context.Context) ([]model.Issue, error) {
 	output, err := a.executor.Execute(ctx, a.workDir, "human", "list", "--json")
 	if err != nil {
 		return nil, err
 	}
-	// bd 1.0.4 emits the literal "null" when no issues are flagged. Map to
-	// an empty slice so the wire response is always a JSON array.
-	if len(bytesTrimSpace(output)) == 0 || string(bytesTrimSpace(output)) == "null" {
-		return []model.Issue{}, nil
-	}
-
 	bdIssues, err := ParseIssueList(output)
 	if err != nil {
 		return nil, &ParseError{Command: "human list", Err: err}
@@ -380,20 +386,3 @@ func computeDoltHealth(s *model.DoltSyncState) model.DoltHealth {
 	return model.DoltHealthGreen
 }
 
-// bytesTrimSpace is a tiny helper that avoids pulling in strings.TrimSpace
-// for one call against a byte slice (saves a string allocation in the hot
-// path of every /api/v1/human poll).
-func bytesTrimSpace(b []byte) []byte {
-	start, end := 0, len(b)
-	for start < end && isASCIIWhitespace(b[start]) {
-		start++
-	}
-	for end > start && isASCIIWhitespace(b[end-1]) {
-		end--
-	}
-	return b[start:end]
-}
-
-func isASCIIWhitespace(c byte) bool {
-	return c == ' ' || c == '\t' || c == '\n' || c == '\r'
-}

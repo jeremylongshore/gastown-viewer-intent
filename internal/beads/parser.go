@@ -274,12 +274,14 @@ func ParseDoltStatus(data []byte) (*model.DoltSyncState, error) {
 // intentionally NOT carried into the model — they would leak the user's
 // DoltHub workspace path into any screen-recording that captures the
 // dashboard. Malformed input returns an empty slice rather than an error
-// so the caller's health-derivation path still functions on a green server
-// with unparseable remote output.
+// so the caller's health-derivation path still functions on a green
+// server with unparseable remote output.
+//
+// `json.Unmarshal` handles the literal `null` and empty input by leaving
+// the target slice nil; the `make([]model.DoltRemote, 0, len(raws))` +
+// empty range loop below guarantees a non-nil empty slice in all the
+// not-an-array cases, so no manual null/empty check is needed.
 func ParseDoltRemotes(data []byte) []model.DoltRemote {
-	if len(data) == 0 || string(data) == "null" {
-		return []model.DoltRemote{}
-	}
 	var raws []rawDoltRemote
 	if err := json.Unmarshal(data, &raws); err != nil {
 		return []model.DoltRemote{}
