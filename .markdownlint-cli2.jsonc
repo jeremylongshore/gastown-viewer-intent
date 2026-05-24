@@ -1,0 +1,24 @@
+{
+  "config": {
+    "default": true,
+    "MD013": false,
+    "MD024": { "siblings_only": true },
+    "MD033": { "allowed_elements": ["br", "details", "summary", "sub", "sup", "kbd"] },
+    "MD041": false,
+    "MD046": { "style": "fenced" }
+  },
+  "globs": [
+    "**/*.md"
+  ],
+  "ignores": [
+    "node_modules/**",
+    "web/node_modules/**",
+    "web/dist/**",
+    "dist/**",
+    "internal/api/web_dist/**",
+    "bin/**",
+    ".audit-harness/**",
+    ".beads/**",
+    "000-docs/6767-a-DR-STND-document-filing-system-standard-v4.md"
+  ]
+}

@@ -1,4 +1,4 @@
-.PHONY: dev test build clean help daemon web tui release release-snapshot install ensure-web-dist
+.PHONY: dev test build clean help daemon web tui release release-snapshot install ensure-web-dist doc-quality markdownlint frontmatter audit-harness-verify
 
 # Default target
 help:
@@ -81,3 +81,18 @@ release-snapshot:
 install: build
 	@chmod +x deploy/install.sh
 	@./deploy/install.sh
+
+# Doc-quality gates (run in CI via .github/workflows/doc-quality.yml).
+# Local invocation: `make doc-quality` runs the two that have no external binary;
+# Vale + lychee are CI-only by default (one-line install instructions in README).
+doc-quality: markdownlint frontmatter
+	@echo "doc-quality: markdownlint + frontmatter validator OK (Vale + lychee run in CI)"
+
+markdownlint:
+	@web/node_modules/.bin/markdownlint-cli2 "**/*.md" "#node_modules" "#web/node_modules"
+
+frontmatter:
+	@python3 scripts/validate-frontmatter.py 000-docs
+
+audit-harness-verify:
+	@web/node_modules/.bin/audit-harness verify
