@@ -771,10 +771,22 @@ type rawWisp struct {
 //
 // Migrated from the legacy `<workDir>/.beads/molecule.json` file-parsing path
 // (gt 0.8 surface) to the gt 0.9 root-level wisps SQLite store. The shell
-// boundary mirrors Convoys() and Mail(): bounded sub-timeout, graceful
-// degradation to nil when gt is absent or its output cannot be parsed (the
-// dashboard simply shows an empty Molecule list rather than failing the
-// whole gas-town view). Council decision Q0 + Q3 (gastown-cr5 AT-DECR).
+// boundary mirrors Convoys() and Mail() in posture but distinguishes two
+// failure classes so the API surface can answer correctly:
+//
+//   - **Caller context cancelled OR deadline exceeded** → return ctx.Err()
+//     so handlers can respond with 504 (the caller asked for a timely answer
+//     and we could not give one). This is the case the dashboard's own
+//     gastownCommandTimeout fires for, and it's the case an external client
+//     deserves to know about.
+//   - **gt missing / town absent / exec error / parse error** → return nil,nil
+//     so the rest of /api/v1/town/* still answers. Empty list is the honest
+//     answer when there is no gt to query; failing the whole town view because
+//     wisps couldn't be enumerated would be over-blocking.
+//
+// Council decision Q0 + Q3 (gastown-cr5 AT-DECR). Refined per PR #11 Gemini
+// review (2026-05-24): the original "nil,nil on any err" pattern matched
+// Convoys() but lost the timeout vs. degradation signal — fixed.
 func (a *FSAdapter) Molecules(ctx context.Context) ([]Molecule, error) {
 	wCtx, cancel := context.WithTimeout(ctx, gastownCommandTimeout)
 	defer cancel()
@@ -783,9 +795,12 @@ func (a *FSAdapter) Molecules(ctx context.Context) ([]Molecule, error) {
 	cmd.Dir = a.townRoot
 	output, err := cmd.Output()
 	if err != nil {
-		// gt missing, town absent, or wisps subcommand failed — degrade silently
-		// so the rest of /api/v1/town/* still answers. This is the same posture
-		// Convoys() and Mail() take.
+		// Distinguish "caller cancelled / their deadline" (propagate) from
+		// "our sub-timeout fired / gt missing / exec failure" (degrade).
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		// gt missing, town absent, or wisps subcommand failed — degrade silently.
 		return nil, nil
 	}
 
@@ -880,7 +895,12 @@ func (r rawWisp) toMolecule() Molecule {
 
 	mol.Total = len(mol.Steps)
 	for _, step := range mol.Steps {
-		if step.Status == "complete" || step.Status == "completed" || step.Status == "done" {
+		// Lower-case before compare so "Complete" / "DONE" / "Completed" all
+		// count as done. Consistent with mapStatus's case-insensitive contract
+		// in internal/beads/parser.go — gt's CLI output capitalization has
+		// drifted across releases.
+		switch strings.ToLower(step.Status) {
+		case "complete", "completed", "done":
 			mol.Progress++
 		}
 	}

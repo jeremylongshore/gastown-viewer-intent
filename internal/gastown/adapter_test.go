@@ -2,6 +2,7 @@ package gastown
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -215,6 +216,55 @@ func TestMolecules_GtAbsent(t *testing.T) {
 	}
 	if mols != nil && len(mols) != 0 {
 		t.Errorf("expected nil or empty Molecules, got %d", len(mols))
+	}
+}
+
+// TestMolecules_CallerCancelled distinguishes timeout/cancellation from
+// graceful degradation. A caller whose context is already cancelled deserves
+// a real error so the HTTP handler can respond with 504, rather than a
+// misleading empty list. Per PR #11 Gemini review (2026-05-24).
+func TestMolecules_CallerCancelled(t *testing.T) {
+	adapter := NewFSAdapter("/tmp/nonexistent-gastown-test")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled before the call
+	_, err := adapter.Molecules(ctx)
+	if err == nil {
+		t.Fatal("expected error when caller context is cancelled, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+}
+
+// TestToMolecule_StepStatus_CaseInsensitive guards the case-insensitive step
+// progress count. gt's CLI output capitalization has drifted across releases
+// ("complete" vs "Complete" vs "DONE"); a step that's done by any spelling
+// must count toward the progress total. Per PR #11 Gemini review (2026-05-24).
+func TestToMolecule_StepStatus_CaseInsensitive(t *testing.T) {
+	raw := rawWisp{
+		ID:    "case-test",
+		Title: "case-insensitive step status",
+		Steps: []struct {
+			Index       int        `json:"index"`
+			ID          string     `json:"id"`
+			Description string     `json:"description"`
+			Status      string     `json:"status"`
+			Needs       []string   `json:"needs,omitempty"`
+			StartedAt   *time.Time `json:"started_at,omitempty"`
+			CompletedAt *time.Time `json:"completed_at,omitempty"`
+		}{
+			{Index: 0, ID: "s0", Status: "complete"},   // lower
+			{Index: 1, ID: "s1", Status: "Completed"},  // title case
+			{Index: 2, ID: "s2", Status: "DONE"},       // upper
+			{Index: 3, ID: "s3", Status: "in_progress"}, // not done
+		},
+	}
+	m := raw.toMolecule()
+	if m.Total != 4 {
+		t.Errorf("Total: got %d, want 4", m.Total)
+	}
+	if m.Progress != 3 {
+		t.Errorf("Progress: got %d, want 3 (complete + Completed + DONE all count)", m.Progress)
 	}
 }
 
