@@ -2,6 +2,7 @@ package beads
 
 import (
 	"testing"
+	"time"
 
 	"github.com/intent-solutions-io/gastown-viewer-intent/internal/model"
 )
@@ -53,6 +54,8 @@ func TestMapStatus(t *testing.T) {
 		{"closed", model.StatusDone},
 		{"done", model.StatusDone},
 		{"blocked", model.StatusBlocked},
+		{"deferred", model.StatusDeferred},
+		{"DEFERRED", model.StatusDeferred}, // case-insensitive
 		{"unknown", model.StatusPending},
 	}
 
@@ -63,6 +66,85 @@ func TestMapStatus(t *testing.T) {
 				t.Errorf("mapStatus(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
+	}
+}
+
+// TestDeferredUntilPreserved is the regression test for the parser.go bug where
+// `bd defer <id> --until <when>` had its until-date silently dropped because
+// the "deferred" status fell through mapStatus's default branch and remapped to
+// "pending", and there was no DeferredUntil field on the model to carry the
+// date even if the status had been preserved. Council decision Q0 + Q3 binding
+// constraint (gastown-cr5 AT-DECR 2026-05-23). When this test fails, the
+// dashboard is lying to the user about what work is actually open versus what
+// is parked until a specific date.
+func TestDeferredUntilPreserved(t *testing.T) {
+	// Real bd 1.0.4 JSON shape captured 2026-05-23 from
+	// `bd show gastown-rj5 --json` after `bd defer gastown-rj5 --until tomorrow`.
+	input := []byte(`[
+		{
+			"id": "gastown-rj5",
+			"title": "Janitorial sweep",
+			"description": "",
+			"status": "deferred",
+			"priority": 2,
+			"issue_type": "task",
+			"created_at": "2026-05-24T04:07:03Z",
+			"updated_at": "2026-05-24T04:35:24Z",
+			"defer_until": "2026-05-25T04:35:24Z"
+		}
+	]`)
+	issues, err := ParseIssueList(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue, got %d", len(issues))
+	}
+
+	bd := issues[0]
+	if bd.Status != "deferred" {
+		t.Errorf("BDIssue.Status: expected %q, got %q", "deferred", bd.Status)
+	}
+	if bd.DeferUntil == nil {
+		t.Fatalf("BDIssue.DeferUntil: expected non-nil for deferred issue, got nil — this is the parser.go:112 regression")
+	}
+	wantTS, _ := time.Parse(time.RFC3339, "2026-05-25T04:35:24Z")
+	if !bd.DeferUntil.Equal(wantTS) {
+		t.Errorf("BDIssue.DeferUntil: expected %v, got %v", wantTS, *bd.DeferUntil)
+	}
+
+	m := bd.ToModelIssue()
+	if m.Status != model.StatusDeferred {
+		t.Errorf("model.Issue.Status: expected %q, got %q — deferred must NOT remap to pending",
+			model.StatusDeferred, m.Status)
+	}
+	if m.DeferredUntil == nil {
+		t.Fatalf("model.Issue.DeferredUntil: expected non-nil — the until-date is being dropped on the floor again")
+	}
+	if !m.DeferredUntil.Equal(wantTS) {
+		t.Errorf("model.Issue.DeferredUntil: expected %v, got %v", wantTS, *m.DeferredUntil)
+	}
+}
+
+// TestDeferredUntilOnlyAttachedWhenDeferred guards against a stale until-date
+// leaking into a non-deferred issue. When `bd update <id> --status open` is run
+// against a previously-deferred issue, bd may keep emitting the old defer_until
+// field in its JSON for a tick; the viewer must not present that as if the
+// issue were still parked.
+func TestDeferredUntilOnlyAttachedWhenDeferred(t *testing.T) {
+	staleTS := time.Date(2026, 5, 25, 4, 35, 24, 0, time.UTC)
+	bd := BDIssue{
+		ID:         "gastown-rj5",
+		Title:      "Janitorial sweep",
+		Status:     "open", // un-deferred but defer_until still emitted
+		DeferUntil: &staleTS,
+	}
+	m := bd.ToModelIssue()
+	if m.Status != model.StatusPending {
+		t.Errorf("expected status pending for un-deferred issue, got %q", m.Status)
+	}
+	if m.DeferredUntil != nil {
+		t.Errorf("DeferredUntil must not leak onto a non-deferred issue; got %v", *m.DeferredUntil)
 	}
 }
 

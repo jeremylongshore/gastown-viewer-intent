@@ -715,18 +715,15 @@ func (a *FSAdapter) enrichAgent(agent *Agent, sessions map[string]bool) {
 		}
 	}
 
-	// Also check molecule.json directly
-	molPath := filepath.Join(workDir, ".beads", "molecule.json")
-	if data, err := os.ReadFile(molPath); err == nil {
-		var mol struct {
-			ID    string `json:"id"`
-			Title string `json:"title"`
-		}
-		if json.Unmarshal(data, &mol) == nil && mol.ID != "" {
-			agent.Molecule = mol.ID
-			agent.HookAttached = true
-		}
-	}
+	// NOTE: the previous implementation also fell back to reading
+	// `<workDir>/.beads/molecule.json` here to recover the agent's molecule
+	// attachment. That file was the gt 0.8 surface for the agent ↔ molecule
+	// relationship; gt 0.9 replaced it with the root-level wisps SQLite store,
+	// queried via `gt wisps list --json` (see Molecules() below). The
+	// seance.json and hook.json reads above already provide the agent's
+	// self-reported molecule ID, so dropping the legacy file read costs no
+	// information against gt 0.9+ and removes a violation of the
+	// CLI-shelling-not-file-parsing invariant documented in repo CLAUDE.md.
 
 	// Get last activity time
 	if info, err := os.Stat(workDir); err == nil {
@@ -743,43 +740,69 @@ func (a *FSAdapter) enrichAgent(agent *Agent, sessions map[string]bool) {
 	}
 }
 
-// Molecules returns all active molecules across all agents.
+// rawWisp mirrors the JSON shape returned by `gt wisps list --json`. Field
+// names match gt's wire format (wisps are gt 0.9's rename of molecules; the
+// underlying schema is preserved across the rename for backward compatibility,
+// but the file-on-disk path that the gt 0.8 viewer read was retired). The
+// viewer keeps the model name "Molecule" so the API surface (and the web tab)
+// stays stable while the data source migrates.
+type rawWisp struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Status      string `json:"status"`
+	Formula     string `json:"formula,omitempty"`
+	CurrentStep int    `json:"current_step"`
+	Agent       string `json:"agent,omitempty"`
+	Rig         string `json:"rig,omitempty"`
+	Steps       []struct {
+		Index       int        `json:"index"`
+		ID          string     `json:"id"`
+		Description string     `json:"description"`
+		Status      string     `json:"status"`
+		Needs       []string   `json:"needs,omitempty"`
+		StartedAt   *time.Time `json:"started_at,omitempty"`
+		CompletedAt *time.Time `json:"completed_at,omitempty"`
+	} `json:"steps,omitempty"`
+	CreatedAt time.Time `json:"created_at,omitempty"`
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
+}
+
+// Molecules returns all active molecules by shelling `gt wisps list --json`.
+//
+// Migrated from the legacy `<workDir>/.beads/molecule.json` file-parsing path
+// (gt 0.8 surface) to the gt 0.9 root-level wisps SQLite store. The shell
+// boundary mirrors Convoys() and Mail(): bounded sub-timeout, graceful
+// degradation to nil when gt is absent or its output cannot be parsed (the
+// dashboard simply shows an empty Molecule list rather than failing the
+// whole gas-town view). Council decision Q0 + Q3 (gastown-cr5 AT-DECR).
 func (a *FSAdapter) Molecules(ctx context.Context) ([]Molecule, error) {
-	var molecules []Molecule
+	wCtx, cancel := context.WithTimeout(ctx, gastownCommandTimeout)
+	defer cancel()
 
-	// Collect all agent work directories
-	agents, err := a.Agents(ctx)
+	cmd := exec.CommandContext(wCtx, "gt", "wisps", "list", "--json")
+	cmd.Dir = a.townRoot
+	output, err := cmd.Output()
 	if err != nil {
-		return nil, err
+		// gt missing, town absent, or wisps subcommand failed — degrade silently
+		// so the rest of /api/v1/town/* still answers. This is the same posture
+		// Convoys() and Mail() take.
+		return nil, nil
 	}
 
-	seen := make(map[string]bool)
-
-	for _, agent := range agents {
-		if agent.WorkDir == "" {
-			continue
-		}
-
-		// Check for molecule.json in .beads/
-		molPath := filepath.Join(agent.WorkDir, ".beads", "molecule.json")
-		mol, err := a.parseMoleculeFile(molPath)
-		if err != nil || mol == nil {
-			continue
-		}
-
-		// Avoid duplicates
-		if seen[mol.ID] {
-			continue
-		}
-		seen[mol.ID] = true
-
-		// Set agent/rig context
-		mol.Agent = agent.Name
-		mol.Rig = agent.Rig
-
-		molecules = append(molecules, *mol)
+	raws, err := parseWispListOutput(output)
+	if err != nil || len(raws) == 0 {
+		return nil, nil
 	}
 
+	molecules := make([]Molecule, 0, len(raws))
+	seen := make(map[string]bool, len(raws))
+	for _, raw := range raws {
+		if raw.ID == "" || seen[raw.ID] {
+			continue
+		}
+		seen[raw.ID] = true
+		molecules = append(molecules, raw.toMolecule())
+	}
 	return molecules, nil
 }
 
@@ -799,43 +822,28 @@ func (a *FSAdapter) Molecule(ctx context.Context, id string) (*Molecule, error) 
 	return nil, fmt.Errorf("molecule not found: %s", id)
 }
 
-// parseMoleculeFile reads and parses a molecule.json file.
-func (a *FSAdapter) parseMoleculeFile(path string) (*Molecule, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
+// parseWispListOutput parses the JSON output of `gt wisps list --json`,
+// accepting either a top-level array (the common case) or a single object
+// (defensive against single-result responses, matching Convoys()'s behavior).
+func parseWispListOutput(output []byte) ([]rawWisp, error) {
+	var list []rawWisp
+	if err := json.Unmarshal(output, &list); err == nil {
+		return list, nil
+	}
+	var single rawWisp
+	if err := json.Unmarshal(output, &single); err != nil {
 		return nil, err
 	}
-
-	var raw struct {
-		ID          string `json:"id"`
-		Title       string `json:"title"`
-		Status      string `json:"status"`
-		Formula     string `json:"formula,omitempty"`
-		CurrentStep int    `json:"current_step"`
-		Steps       []struct {
-			Index       int        `json:"index"`
-			ID          string     `json:"id"`
-			Description string     `json:"description"`
-			Status      string     `json:"status"`
-			Needs       []string   `json:"needs,omitempty"`
-			StartedAt   *time.Time `json:"started_at,omitempty"`
-			CompletedAt *time.Time `json:"completed_at,omitempty"`
-		} `json:"steps,omitempty"`
-		CreatedAt time.Time `json:"created_at,omitempty"`
-		UpdatedAt time.Time `json:"updated_at,omitempty"`
-	}
-
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, err
-	}
-
-	if raw.ID == "" {
+	if single.ID == "" {
 		return nil, nil
 	}
+	return []rawWisp{single}, nil
+}
 
-	// Convert status string to MoleculeStatus
+// toMolecule converts a rawWisp into the viewer's Molecule domain type.
+func (r rawWisp) toMolecule() Molecule {
 	status := MolStatusPending
-	switch raw.Status {
+	switch r.Status {
 	case "in_progress":
 		status = MolStatusInProgress
 	case "complete", "completed":
@@ -846,18 +854,19 @@ func (a *FSAdapter) parseMoleculeFile(path string) (*Molecule, error) {
 		status = MolStatusFailed
 	}
 
-	mol := &Molecule{
-		ID:          raw.ID,
-		Title:       raw.Title,
+	mol := Molecule{
+		ID:          r.ID,
+		Title:       r.Title,
 		Status:      status,
-		Formula:     raw.Formula,
-		CurrentStep: raw.CurrentStep,
-		CreatedAt:   raw.CreatedAt,
-		UpdatedAt:   raw.UpdatedAt,
+		Formula:     r.Formula,
+		CurrentStep: r.CurrentStep,
+		Agent:       r.Agent,
+		Rig:         r.Rig,
+		CreatedAt:   r.CreatedAt,
+		UpdatedAt:   r.UpdatedAt,
 	}
 
-	// Convert steps
-	for _, s := range raw.Steps {
+	for _, s := range r.Steps {
 		mol.Steps = append(mol.Steps, MoleculeStep{
 			Index:       s.Index,
 			ID:          s.ID,
@@ -869,15 +878,13 @@ func (a *FSAdapter) parseMoleculeFile(path string) (*Molecule, error) {
 		})
 	}
 
-	// Calculate progress
 	mol.Total = len(mol.Steps)
 	for _, step := range mol.Steps {
 		if step.Status == "complete" || step.Status == "completed" || step.Status == "done" {
 			mol.Progress++
 		}
 	}
-
-	return mol, nil
+	return mol
 }
 
 // getSessionName returns the expected tmux session name for an agent.
