@@ -22,6 +22,18 @@ type Adapter interface {
 	// Graph returns the dependency graph.
 	Graph(ctx context.Context) (*model.Graph, error)
 
+	// DoltSyncState returns the composed dolt server + remote status used by
+	// the header sync pill. Errors are NOT returned for ordinary "dolt
+	// server not running" — that becomes Health=red in the response — only
+	// for bd-binary-missing or beads-uninitialized cases.
+	DoltSyncState(ctx context.Context) (*model.DoltSyncState, error)
+
+	// HumanFlags lists every bead carrying the "human" label (issues an AI
+	// agent or automation has flagged for human decision). Read-only;
+	// respond/dismiss are deferred to a future bead behind the auth token
+	// gate from gastown-hu4.
+	HumanFlags(ctx context.Context) ([]model.Issue, error)
+
 	// IsInitialized checks if beads is initialized in the current directory.
 	IsInitialized(ctx context.Context) (bool, error)
 
@@ -270,4 +282,118 @@ func (a *CLIAdapter) Version(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return ParseVersion(output), nil
+}
+
+// DoltSyncState implements Adapter.DoltSyncState by composing
+// `bd dolt status --json` and `bd dolt remote list --json`. ANY error from
+// the underlying bd calls is mapped to DoltHealthUnknown rather than a Go
+// error return — the header sync pill must never 500 the whole dashboard.
+// The error string is propagated via DoltSyncState.Error so the UI can
+// render it as a tooltip on the gray pill.
+//
+// This includes bd-not-found, beads-not-initialized, the "no active beads
+// workspace found" JSON-as-stdout error bd 1.0.4 emits in a non-beads dir,
+// schema-parse failures, and unexpected exec errors. Remote-list failures
+// degrade to Remotes=[] without affecting the server-up status.
+func (a *CLIAdapter) DoltSyncState(ctx context.Context) (*model.DoltSyncState, error) {
+	statusOut, err := a.executor.Execute(ctx, a.workDir, "dolt", "status", "--json")
+	if err != nil {
+		return &model.DoltSyncState{
+			Health:  model.DoltHealthUnknown,
+			Remotes: []model.DoltRemote{},
+			Error:   err.Error(),
+		}, nil
+	}
+
+	state, parseErr := ParseDoltStatus(statusOut)
+	if parseErr != nil {
+		return &model.DoltSyncState{
+			Health:  model.DoltHealthUnknown,
+			Remotes: []model.DoltRemote{},
+			Error:   parseErr.Error(),
+		}, nil
+	}
+
+	// bd 1.0.4 in a non-beads dir emits a JSON object like
+	// {"error": "no active beads workspace found", ...}. ParseDoltStatus
+	// surfaces that string in state.Error. When present, the rest of the
+	// state fields are unreliable and we report Unknown.
+	if state.Error != "" {
+		state.Health = model.DoltHealthUnknown
+		return state, nil
+	}
+
+	// Remote list is best-effort; do not let its failure poison the running
+	// pill state — a green-server-with-unknown-remotes still gives the user
+	// useful signal.
+	remoteOut, remoteErr := a.executor.Execute(ctx, a.workDir, "dolt", "remote", "list", "--json")
+	if remoteErr == nil {
+		state.Remotes = ParseDoltRemotes(remoteOut)
+	}
+
+	state.Health = computeDoltHealth(state)
+	return state, nil
+}
+
+// HumanFlags implements Adapter.HumanFlags by shelling
+// `bd human list --json`. Returns a non-nil slice (possibly empty) so
+// callers and JSON encoders never need to defend against a null slice.
+func (a *CLIAdapter) HumanFlags(ctx context.Context) ([]model.Issue, error) {
+	output, err := a.executor.Execute(ctx, a.workDir, "human", "list", "--json")
+	if err != nil {
+		return nil, err
+	}
+	// bd 1.0.4 emits the literal "null" when no issues are flagged. Map to
+	// an empty slice so the wire response is always a JSON array.
+	if len(bytesTrimSpace(output)) == 0 || string(bytesTrimSpace(output)) == "null" {
+		return []model.Issue{}, nil
+	}
+
+	bdIssues, err := ParseIssueList(output)
+	if err != nil {
+		return nil, &ParseError{Command: "human list", Err: err}
+	}
+	issues := make([]model.Issue, 0, len(bdIssues))
+	for _, bi := range bdIssues {
+		issues = append(issues, bi.ToModelIssue())
+	}
+	return issues, nil
+}
+
+// computeDoltHealth derives the UI pill color from the raw status fields.
+// Rule:
+//   - server down                      → red
+//   - server up, any remote != "ok"    → yellow
+//   - server up, all remotes "ok"      → green
+//   - any other shape                  → green (server up with no remotes
+//     configured is the new-repo default; do not penalize the user for
+//     not yet adding a remote)
+func computeDoltHealth(s *model.DoltSyncState) model.DoltHealth {
+	if !s.Running {
+		return model.DoltHealthRed
+	}
+	for _, r := range s.Remotes {
+		if r.Status != "" && r.Status != "ok" {
+			return model.DoltHealthYellow
+		}
+	}
+	return model.DoltHealthGreen
+}
+
+// bytesTrimSpace is a tiny helper that avoids pulling in strings.TrimSpace
+// for one call against a byte slice (saves a string allocation in the hot
+// path of every /api/v1/human poll).
+func bytesTrimSpace(b []byte) []byte {
+	start, end := 0, len(b)
+	for start < end && isASCIIWhitespace(b[start]) {
+		start++
+	}
+	for end > start && isASCIIWhitespace(b[end-1]) {
+		end--
+	}
+	return b[start:end]
+}
+
+func isASCIIWhitespace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r'
 }

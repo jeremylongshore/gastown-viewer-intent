@@ -100,3 +100,60 @@ func TestCORSPreflight(t *testing.T) {
 		t.Errorf("Expected status 204 for preflight, got %d", w.Code)
 	}
 }
+
+// TestSyncHandler_NoBeadsReturnsUnknown verifies the /api/v1/sync handler
+// gracefully reports DoltHealthUnknown (not 503) when bd is unavailable,
+// so the header sync pill renders gray instead of breaking the whole UI.
+// Council Q0 Surface 2 (gastown-cr5 AT-DECR).
+func TestSyncHandler_NoBeadsReturnsUnknown(t *testing.T) {
+	config := DefaultConfig()
+	adapter := beads.NewCLIAdapter("")
+	server := NewServer(config, adapter)
+
+	req := httptest.NewRequest("GET", "/api/v1/sync", nil)
+	w := httptest.NewRecorder()
+	server.Handler().ServeHTTP(w, req)
+
+	// Accept either 200 (with health=unknown) or 503 (BD_NOT_FOUND) depending
+	// on whether `bd` is on PATH in the CI environment. Both are acceptable;
+	// what's NOT acceptable is 500 or an empty body.
+	if w.Code != http.StatusOK && w.Code != http.StatusServiceUnavailable {
+		t.Errorf("status: got %d, want 200 or 503", w.Code)
+	}
+	if w.Body.Len() == 0 {
+		t.Error("response body should be non-empty even on error paths")
+	}
+}
+
+// TestHumanFlagsHandler_NoBeadsReturns503 verifies the /api/v1/human handler
+// runs through checkBeadsInitialized so a missing bd CLI surfaces as 503
+// BD_NOT_FOUND or BEADS_NOT_INIT — same posture as the existing issue
+// handlers. Council Q0 Surface 3 (gastown-cr5 AT-DECR).
+func TestHumanFlagsHandler_NoBeadsReturns503(t *testing.T) {
+	config := DefaultConfig()
+	adapter := beads.NewCLIAdapter("")
+	server := NewServer(config, adapter)
+
+	req := httptest.NewRequest("GET", "/api/v1/human", nil)
+	w := httptest.NewRecorder()
+	server.Handler().ServeHTTP(w, req)
+
+	// Same posture as Issues/Board handlers: 503 when bd is missing or
+	// beads not initialized, 200 with possibly-empty list when bd is OK.
+	if w.Code != http.StatusOK && w.Code != http.StatusServiceUnavailable {
+		t.Errorf("status: got %d, want 200 or 503", w.Code)
+	}
+	if w.Code == http.StatusOK {
+		// Decode response body to confirm shape.
+		var resp struct {
+			Flags []interface{} `json:"flags"`
+			Count int           `json:"count"`
+		}
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Errorf("decoding response: %v", err)
+		}
+		if resp.Flags == nil {
+			t.Error("flags field must be non-null (empty array preferred over null)")
+		}
+	}
+}

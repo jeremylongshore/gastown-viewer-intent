@@ -230,3 +230,41 @@ func handleAdapterError(w http.ResponseWriter, err error) {
 
 	writeError(w, http.StatusInternalServerError, "BD_ERROR", err.Error())
 }
+
+// handleSync handles GET /api/v1/sync. Returns the composed dolt server +
+// remote status used by the header sync pill (council Q0 Surface 2). The
+// handler does NOT call checkBeadsInitialized because a not-initialized
+// daemon should still respond with Health=unknown rather than 503'ing —
+// the whole point of the pill is to surface the desync condition.
+func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
+	state, err := s.adapter.DoltSyncState(r.Context())
+	if err != nil {
+		if beads.IsBDNotFoundError(err) {
+			writeError(w, http.StatusServiceUnavailable, "BD_NOT_FOUND", err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "BD_ERROR", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, state)
+}
+
+// handleHumanFlags handles GET /api/v1/human. Returns the list of beads
+// flagged for human decision (council Q0 Surface 3 — READ-VIEW only;
+// respond/dismiss POST handlers are explicitly deferred to a future bead
+// per the 2026-05-23 AT-DECR).
+func (s *Server) handleHumanFlags(w http.ResponseWriter, r *http.Request) {
+	if !s.checkBeadsInitialized(w, r) {
+		return
+	}
+	flags, err := s.adapter.HumanFlags(r.Context())
+	if err != nil {
+		handleAdapterError(w, err)
+		return
+	}
+	resp := model.HumanFlagsResponse{
+		Flags: flags,
+		Count: len(flags),
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
