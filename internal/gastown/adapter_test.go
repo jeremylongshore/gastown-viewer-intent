@@ -214,7 +214,7 @@ func TestMolecules_GtAbsent(t *testing.T) {
 	if err != nil {
 		t.Errorf("Molecules() with no gt should not error, got: %v", err)
 	}
-	if mols != nil && len(mols) != 0 {
+	if len(mols) != 0 {
 		t.Errorf("expected nil or empty Molecules, got %d", len(mols))
 	}
 }
