@@ -9,6 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Development Commands
 
 ```bash
+
 make dev              # Daemon (localhost:7070) + web (localhost:5173) in parallel
 make daemon           # Daemon only
 make web              # Web dev server only (Vite hot reload)
@@ -18,29 +19,35 @@ make test             # Go tests + web lint
 make clean            # Remove bin/, dist/, web/dist/, internal/api/web_dist/
 
 # Go tests
+
 go test -v ./...                         # All tests
 go test -v ./internal/beads/...          # Single package
 go test -v -run TestParseIssueList ./internal/beads/...  # Single test
 
 # Web
+
 cd web && npm run dev       # Dev server
 cd web && npm run build     # TypeScript check + Vite build
 cd web && npm run lint      # ESLint
 
 # Verify daemon
+
 curl http://localhost:7070/api/v1/health
 ```
 
 ## Architecture
 
-Two adapters feed data into a single HTTP server:
+Two adapters feed data into a single HTTP server with a security
+middleware chain in front:
 
-- **Beads Adapter** (`internal/beads/`): Shells out to `bd` CLI for issue data. Never parses `.beads/` files directly. Uses the `Executor` interface (`DefaultExecutor` for production, `MockExecutor` for tests).
-- **Gastown Adapter** (`internal/gastown/`): Reads Gas Town filesystem at `~/gt` and shells to `gt` CLI for convoys/mail. Detects agent status via tmux sessions and file timestamps (active/idle 2min/stuck 10min).
+- **Beads Adapter** (`internal/beads/`): Shells out to `bd` CLI for issue data. Never parses `.beads/` files directly. Uses the `Executor` interface (`DefaultExecutor` for production, `MockExecutor` for tests). Surfaces `bd memories`, `bd dolt status`, `bd human list` in addition to the standard issue/board/graph routes.
+- **Gastown Adapter** (`internal/gastown/`): Reads Gas Town filesystem at `~/gt` and shells to `gt` CLI. Molecules now read from `gt wisps list --json` (gt 0.9 surface); legacy `.beads/molecule.json` file reads were removed in `gastown-7fq`.
+- **Security middleware** (`internal/api/security.go`): Origin allowlist (DNS-rebind + CSRF defense), session token at `~/.config/gvid/token` (mode 0600), loopback bind enforcement at `Start()`. See `THREAT_MODEL.md` for the full model.
+- **Memory redaction** (`internal/api/memoryredact.go`): Applies the partner-name + secret-pattern denylists from `000-docs/005-PP-POLICY-memories-classification-2026-05-24.md` before any memory crosses the HTTP boundary.
 
 Both adapters are interface-based for testability. The `Server` (`internal/api/server.go`) composes both and registers routes on `net/http.ServeMux` using Go 1.22+ method routing (`"GET /api/v1/issues/{id}"`).
 
-**Data flow**: Web UI/TUI -> HTTP API (gvid :7070) -> Adapters -> `bd`/`gt` CLI + filesystem
+**Data flow**: Web UI/TUI → Origin allowlist → CORS → HTTP API (gvid :7070) → Adapters → `bd`/`gt` CLI + filesystem.
 
 **SSE**: The `SSEBroker` (`internal/api/sse.go`) manages client connections with heartbeat at `/api/v1/events`.
 
@@ -49,7 +56,9 @@ Both adapters are interface-based for testability. The `Server` (`internal/api/s
 - **Fail-fast**: If `bd` not found, return 503 `BD_NOT_FOUND`. If `.beads/` not initialized, return 503 `BEADS_NOT_INIT`. Every beads handler calls `checkBeadsInitialized()` first.
 - **CLI shelling, not file parsing**: Both adapters shell to their respective CLIs rather than parsing internal state files. This keeps the viewer decoupled from internal formats.
 - **No external router**: Uses stdlib `net/http.ServeMux` with Go 1.22+ pattern matching. No Gin/Chi/Echo.
-- **CORS**: Configured for `http://localhost:5173` in development via middleware.
+- **CORS + Origin allowlist**: CORS headers configured for `http://localhost:5173`; a hard Origin allowlist middleware runs outermost and rejects mismatched cross-origin requests with 403 `ORIGIN_REJECTED`. Native clients (no `Origin` header) bypass the gate by design.
+- **Memories panel is read-only-forever**: Council Q2 architectural invariant. Zero state-mutating endpoints under `/api/v1/memories/*`. The bd CLI is the canonical writer. A test (`TestMemoriesHandler_NoPOSTRouteRegistered`) tripwires this rule.
+- **Sync pill never errors**: `/api/v1/sync` always returns 200 with a `DoltSyncState` body; failure cases are encoded as `health: "unknown"` with a tooltip string. The header pill must never break the dashboard.
 
 ## Testing
 
@@ -58,23 +67,38 @@ Prefer integration tests that hit the real `bd` CLI over mocks. Parser tests (`p
 ## API Routes
 
 Two route groups defined in `server.go:registerRoutes()`:
-- **Beads** (`/api/v1/`): health, issues, board, graph, events
+
+- **Beads** (`/api/v1/`): health, issues, board, graph, events, sync, human, memories (+ search + by-key)
 - **Gas Town** (`/api/v1/town/`): status, rigs, agents, convoys, molecules, mail
 
-Graph endpoint supports `?format=json` (default) and `?format=dot` (Graphviz DOT).
+Graph endpoint supports `?format=json` (default) and `?format=dot` (Graphviz DOT). Memory endpoints accept `?reveal=true` to opt into un-redacted content per `005-PP-POLICY`.
 
 ## Web UI
 
-React 19 + Vite 7 + TypeScript. Single-page app with three tab views:
+React 19 + Vite 7 + TypeScript. Single-page app with five tab views plus a header sync pill:
+
 - **Board**: Kanban columns from `/api/v1/board`
 - **Graph**: D3.js force-directed visualization from `/api/v1/graph`
 - **Gas Town**: Agent dashboard with molecules and convoys
+- **Memory**: Read-only `bd memories` viewer with default-redacted content, per-card reveal toggle (does NOT persist), and `Copy bd recall <key>` CLI passthrough
+- **Triage**: Read-only queue of beads with the `human` label
+- **Sync pill** (in header): green/yellow/red/gray pill bound to `/api/v1/sync`
 
-All API types and fetch functions in `web/src/api.ts`. Polls every 5 seconds.
+All API types and fetch functions in `web/src/api.ts`. Polls every 5 seconds; the Memory panel additionally debounces its search on input change.
+
+## Security model
+
+Full details in `THREAT_MODEL.md`. Short version:
+
+- Loopback bind enforced at `Start()`; `--host=0.0.0.0` is refused with an actionable error.
+- Origin allowlist middleware (`OriginAllowlistMiddleware`) rejects cross-origin requests at 403; defends against DNS rebinding and CSRF from any tab on the dev box.
+- Session token (`SessionToken`) at `~/.config/gvid/token` (mode 0600). Required by `RequireTokenMiddleware` on any state-changing route. None ship today — installed for future POST routes.
+- Memory content classification per `000-docs/005-PP-POLICY-memories-classification-2026-05-24.md`; redaction applied in `internal/api/memoryredact.go`.
 
 ## Beads Work Tracking
 
 ```bash
+
 bd ready              # Show unblocked issues
 bd blocked            # Show dependency graph
 bd show <id>          # View issue details

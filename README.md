@@ -1,81 +1,147 @@
 # Gastown Viewer Intent
 
-> Mission Control dashboard for [Gastown](https://github.com/steveyegge/gastown) multi-agent workspaces.
+> Mission Control dashboard for Beads and Gas Town multi-agent workspaces.
 
 [![Release](https://img.shields.io/github/v/release/intent-solutions-io/gastown-viewer-intent)](https://github.com/intent-solutions-io/gastown-viewer-intent/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-## What's New in v0.4.0
+## What's New in v0.5.0 (Phase 2 — Option B-minus)
 
-### Embedded Web UI
-- **Single binary serves everything** — `gvid` now bundles the React dashboard via `go:embed`
-- No more separate `npm install && npm run dev` — just run `gvid` and open `http://localhost:7070`
-- `go install`, `brew install`, and direct downloads all include the full web UI
-- Development workflow preserved: `make dev` still runs Vite hot reload with API proxy
+Targeted daily-value refresh per the
+[2026-05-23 Council Decision Record](000-docs/004-AT-DECR-gastown-viewer-option-b-council-2026-05-23.md).
+Three new read-only surfaces, hardened daemon binding, and a memory
+classification policy.
 
-### Previous Highlights (v0.3.0)
+### Memories panel (read-only, with redaction)
 
-- **Convoy Dashboard**: Batch work progress with Done/Active/Blocked/Pending counts
-- **Interactive Dependency Graph**: D3.js force-directed visualization of all 14 Beads edge types
-- **Smart Agent Status**: Active/Idle/Stuck detection with tmux integration
-- **Molecule Progress Tracker**: Workflow step-by-step completion tracking
+- `bd memories` surfaced in a new **Memory** tab with search.
+- Per-card **Reveal** button — does NOT persist across navigation, per
+  the [classification policy](000-docs/005-PP-POLICY-memories-classification-2026-05-24.md).
+- Partner-name and secret-pattern strings are redacted by default
+  (`kobiton`, `nixtla`, `mudit`, `polygon`, `lit`, `elm` + token prefixes
+  `sk-`, `ghp_`, `AKIA`, `glpat-`, etc.).
+- `Copy 'bd recall <key>'` button for terminal passthrough — the bd CLI
+  remains the canonical writer (Council Q2 architectural invariant: no
+  POST routes under `/api/v1/memories/*`).
 
----
+### Dolt sync widget (header pill)
 
-## What It Does
+- Live status of the local dolt server + remotes via `bd dolt status`.
+- Pill color: green (synced) / yellow (remote degraded) / red (server
+  down) / gray (unknown).
+- Tooltip shows remote count and any error from bd.
 
-**Gastown Viewer** provides real-time visibility into your Gas Town agent swarms:
+### Human triage queue (read-only)
 
-- **Agent Dashboard**: See all agents (Mayor, Deacon, Witness, Refinery, Polecats, Crew) with live status
-- **Dependency Graph**: Interactive visualization of issue relationships
-- **Molecule Tracking**: Monitor workflow progress across agents
-- **Rig Overview**: Monitor project rigs with agent health and activity
-- **Convoy Tracking**: Track batch work progress across rigs
-- **Beads Integration**: Kanban board view of issues managed by your agents
-- **Web + TUI**: Browser dashboard or terminal interface
+- Lists every bead carrying the `human` label — issues an AI agent or
+  automation flagged for human decision.
+- Read-only view. `respond` / `dismiss` actions ship in a later release
+  behind the auth-token gate (see `THREAT_MODEL.md`).
+
+### Daemon hardening
+
+- `gvid` refuses to bind any non-loopback address by default; the loopback
+  check rejects `0.0.0.0`, `::`, private LAN, link-local, and any
+  hostname other than `localhost`.
+- Origin header allowlist rejects cross-origin requests at the middleware
+  layer (defense against DNS rebinding and CSRF from any tab on the dev
+  box).
+- 256-bit session token generated on every daemon start, persisted to
+  `~/.config/gvid/token` (mode 0600). Required by future state-changing
+  endpoints; read-only endpoints still work for native clients without
+  the token.
+
+### Foundation fixes
+
+- `bd defer --until <date>` now round-trips — the date is preserved as
+  `model.Issue.DeferredUntil` instead of being dropped on the floor.
+- Molecules now read from `gt wisps list --json` (gt 0.9 surface)
+  instead of the retired `<workDir>/.beads/molecule.json` file.
+
+### Previous highlights (v0.4.0)
+
+- **Embedded Web UI**: single binary serves the React dashboard via
+  `go:embed`.
+- **Convoy Dashboard**: batch work progress with Done/Active/Blocked
+  counts.
+- **Interactive Dependency Graph**: D3.js force-directed visualization.
+- **Smart Agent Status**: Active/Idle/Stuck detection.
+
+## Supported-version matrix
+
+The viewer follows a "honest lag" cadence rather than chasing every
+upstream release. Refreshes are opportunistic, on user-pain trigger,
+EXCEPT for security-flagged upstream releases which follow a 48-hour
+fast-path SLA.
+
+| Upstream | Tested range | Notes |
+|---|---|---|
+| `bd` (Beads CLI) | 1.0.4 | `defer --until` preserved; `human list`, `dolt status`, `memories` surfaced |
+| `gt` (Gas Town CLI) | 0.9.0 | Wisps surface used; legacy `.beads/molecule.json` no longer read |
+| Go | 1.22+ | Building from source |
+| Node.js | 20+ | Web dev |
+
+## What it does
+
+Real-time visibility into your Beads issue tracker and Gas Town agent
+swarms.
+
+| Surface | What's there |
+|---|---|
+| **Board** | Kanban view of Beads issues |
+| **Graph** | Interactive D3.js dependency visualization |
+| **Gas Town** | Agent dashboard with molecules, convoys, rigs |
+| **Memory** | Read-only `bd memories` viewer with classification redaction |
+| **Triage** | Read-only human-needed bead queue |
+| **Header sync pill** | Live dolt sync state |
 
 ## Quickstart
 
 ### Install
 
-**Homebrew (macOS/Linux)**
+#### Homebrew (macOS/Linux)
+
 ```bash
 brew tap intent-solutions-io/tap
 brew install gvid
 ```
 
-**Direct Download**
+#### Direct download
 
-Download binaries from [Releases](https://github.com/intent-solutions-io/gastown-viewer-intent/releases).
+Download binaries from the
+[releases page](https://github.com/intent-solutions-io/gastown-viewer-intent/releases).
 
-**From Source**
+#### From source
+
 ```bash
 go install github.com/intent-solutions-io/gastown-viewer-intent/cmd/gvid@latest
 ```
 
 ### Prerequisites
 
-- [Gastown](https://github.com/steveyegge/gastown) installed at `~/gt`
-- [Beads](https://github.com/steveyegge/beads) (`bd` CLI in PATH)
+- [Beads](https://github.com/steveyegge/beads) (`bd` CLI in `$PATH`).
+- [Gas Town](https://github.com/steveyegge/gastown) installed at `~/gt`
+  (optional — the dashboard works without it; the Gas Town tab simply
+  reports the town as absent).
 
 For development:
+
 - Go 1.22+
 - Node.js 20+
 
 ### Run
 
 ```bash
-# If installed via brew/binary:
+# If installed via brew or binary:
 gvid                          # Start daemon + web UI on :7070
 
-# For development (hot reload):
+# For development with hot reload:
 make dev                      # Vite on :5173, API proxied to :7070
 ```
 
-Open http://localhost:7070 (or http://localhost:5173 during development) and switch between tabs:
-- **Board** - Kanban view of Beads issues
-- **Graph** - Interactive dependency visualization
-- **Gas Town** - Agent dashboard with molecules
+Open [http://localhost:7070](http://localhost:7070) (or
+[http://localhost:5173](http://localhost:5173) during development) and
+switch tabs.
 
 ### Verify
 
@@ -85,24 +151,23 @@ curl http://localhost:7070/api/v1/health
 
 # Gas Town status
 curl http://localhost:7070/api/v1/town/status
-# {"healthy":true,"active_agents":5,"total_agents":8,"active_rigs":2,"molecules":3}
 
-# List agents with status
-curl http://localhost:7070/api/v1/town/agents
+# Dolt sync state (header pill source)
+curl http://localhost:7070/api/v1/sync
 
-# Get dependency graph as DOT
+# Memories (default-redacted)
+curl http://localhost:7070/api/v1/memories
+
+# Human triage queue
+curl http://localhost:7070/api/v1/human
+
+# Dependency graph as Graphviz DOT
 curl "http://localhost:7070/api/v1/graph?format=dot" | dot -Tsvg > deps.svg
-
-# List active molecules
-curl http://localhost:7070/api/v1/town/molecules
-
-# List active convoys
-curl http://localhost:7070/api/v1/town/convoys
 ```
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                      Gastown Viewer Intent                       │
 ├─────────────────────────────────────────────────────────────────┤
@@ -117,104 +182,127 @@ curl http://localhost:7070/api/v1/town/convoys
 │                                ▼                                 │
 │                    ┌───────────────────────┐                    │
 │                    │       gvid Daemon     │                    │
-│                    │     localhost:7070    │                    │
+│                    │   localhost:7070      │                    │
+│                    │  + Origin allowlist   │                    │
+│                    │  + Session token gate │                    │
 │                    └───────────┬───────────┘                    │
 │                                │                                 │
 │              ┌─────────────────┼─────────────────┐              │
 │              ▼                                   ▼              │
 │   ┌───────────────────────┐         ┌───────────────────────┐  │
 │   │   Gastown Adapter     │         │    Beads Adapter      │  │
-│   │   (reads ~/gt/)       │         │   (shells to `bd`)    │  │
+│   │  (`gt` CLI + ~/gt)    │         │   (shells to `bd`)    │  │
 │   └───────────┬───────────┘         └───────────┬───────────┘  │
 │               │                                 │               │
 │               ▼                                 ▼               │
 │   ┌───────────────────────┐         ┌───────────────────────┐  │
-│   │      Gas Town         │         │     .beads/ state     │  │
-│   │  ~/gt (rigs, agents)  │         │   (issues, deps)      │  │
+│   │      Gas Town         │         │     bd / Dolt store   │  │
+│   │  ~/gt (rigs, agents)  │         │   (issues, memories)  │  │
 │   └───────────────────────┘         └───────────────────────┘  │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Gas Town Concepts
+## Gas Town concepts
 
 | Concept | Description |
-|---------|-------------|
+|---|---|
 | **Town** | Workspace root (`~/gt`) containing all rigs and town-level agents |
-| **Mayor** | Town coordinator - routes work across rigs |
-| **Deacon** | Town patrol - monitors health and escalates issues |
+| **Mayor** | Town coordinator — routes work across rigs |
+| **Deacon** | Town patrol — monitors health and escalates issues |
 | **Rig** | Project container with its own agent pool |
-| **Witness** | Rig-level overseer - manages polecat lifecycle |
+| **Witness** | Rig-level overseer — manages polecat lifecycle |
 | **Refinery** | Merge queue processor for the rig |
 | **Polecats** | Transient workers spawned for specific tasks |
 | **Crew** | Persistent user-managed workers in a rig |
 | **Convoy** | Batch work tracking across multiple rigs |
-| **Molecule** | Workflow instance with steps, assigned to an agent |
+| **Molecule** / **Wisp** | Workflow instance — `wisp` is the gt 0.9 name |
 | **Formula** | Template defining molecule structure and steps |
 
-## API Endpoints
+## API endpoints
+
+### Beads
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/v1/health` | Health check |
+| `GET /api/v1/board` | Kanban board view |
+| `GET /api/v1/issues` | List issues |
+| `GET /api/v1/issues/{id}` | Issue details |
+| `GET /api/v1/graph?format={json,dot}` | Dependency graph |
+| `GET /api/v1/events` | SSE event stream |
+| `GET /api/v1/sync` | Dolt sync state (header pill) |
+| `GET /api/v1/human` | Human triage queue (read-only) |
+| `GET /api/v1/memories` | Memory layer (default-redacted; `?reveal=true` to opt in) |
+| `GET /api/v1/memories/{key}` | Single memory recall |
+| `GET /api/v1/memories/search?q=...` | Substring search |
 
 ### Gas Town
 
 | Endpoint | Description |
-|----------|-------------|
-| `GET /api/v1/town/status` | Town health, agent/rig counts |
+|---|---|
+| `GET /api/v1/town/status` | Town health, agent + rig counts |
 | `GET /api/v1/town` | Full town structure |
 | `GET /api/v1/town/rigs` | List all rigs |
-| `GET /api/v1/town/rigs/:name` | Single rig details |
+| `GET /api/v1/town/rigs/{name}` | Single rig details |
 | `GET /api/v1/town/agents` | All agents with status |
 | `GET /api/v1/town/convoys` | Active convoys |
-| `GET /api/v1/town/convoys/:id` | Single convoy details |
-| `GET /api/v1/town/molecules` | Active molecules across agents |
-| `GET /api/v1/town/molecules/:id` | Single molecule details |
-| `GET /api/v1/town/mail/:address` | Agent mail inbox |
+| `GET /api/v1/town/convoys/{id}` | Single convoy details |
+| `GET /api/v1/town/molecules` | Active molecules (sourced from `gt wisps`) |
+| `GET /api/v1/town/molecules/{id}` | Single molecule details |
+| `GET /api/v1/town/mail/{address}` | Agent mail inbox |
 
-### Beads (Issues)
+## Security model
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/v1/health` | Health check |
-| `GET /api/v1/board` | Kanban board view |
-| `GET /api/v1/issues` | List issues |
-| `GET /api/v1/issues/:id` | Issue details |
-| `GET /api/v1/graph?format=json` | Dependency graph (JSON) |
-| `GET /api/v1/graph?format=dot` | Dependency graph (Graphviz DOT) |
-| `GET /api/v1/events` | SSE event stream |
+See `THREAT_MODEL.md` for the full threat model. Key points:
+
+- Loopback bind enforced at startup; `--host=0.0.0.0` is refused.
+- Origin allowlist middleware rejects cross-origin requests
+  (DNS-rebind / CSRF defense).
+- Session token at `~/.config/gvid/token` (mode 0600). State-mutating
+  endpoints behind the token gate (none shipped yet — all current
+  endpoints are read-only).
+- Memories panel is **read-only-forever** by architectural invariant
+  (Council Q2). The bd CLI is the canonical writer.
 
 ## Configuration
 
 ```bash
 # Custom Gas Town location
-go run ./cmd/gvid --town /path/to/gt
+gvid --town /path/to/gt
 
 # Custom port
-go run ./cmd/gvid --port 8080
+gvid --port 8080
 
 # All options
-go run ./cmd/gvid --help
+gvid --help
 ```
 
-## Project Structure
+## Project structure
 
-```
+```text
 gastown-viewer-intent/
 ├── cmd/
-│   ├── gvid/              # Daemon
+│   ├── gvid/              # Daemon entrypoint
 │   └── gvi-tui/           # TUI client
 ├── internal/
-│   ├── api/               # HTTP handlers
-│   ├── gastown/           # Gas Town adapter (reads ~/gt)
+│   ├── api/               # HTTP handlers, security, redaction
+│   ├── gastown/           # Gas Town adapter (reads ~/gt + gt CLI)
 │   ├── beads/             # Beads adapter (bd CLI)
 │   └── model/             # Domain types
-├── web/                   # React + Vite frontend
+├── web/                   # React + Vite frontend (embedded via go:embed)
+├── 000-docs/              # Project docs (per /doc-filing v4.3)
+├── tests/                 # Testing policy
 └── Makefile
 ```
 
 ## License
 
-MIT
+MIT — see `LICENSE`.
 
-## Related Projects
+## Related projects
 
-- [Gastown](https://github.com/steveyegge/gastown) - Multi-agent workspace orchestrator
-- [Beads](https://github.com/steveyegge/beads) - Local-first issue tracking with dependencies
+- [Gastown](https://github.com/steveyegge/gastown) — multi-agent
+  workspace orchestrator.
+- [Beads](https://github.com/steveyegge/beads) — local-first issue
+  tracking with dependencies.
