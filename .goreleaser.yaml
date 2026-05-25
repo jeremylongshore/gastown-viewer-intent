@@ -74,20 +74,26 @@ changelog:
       - '^test:'
       - '^chore:'
 
-brews:
-  - name: gvid
-    repository:
-      owner: intent-solutions-io
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    homepage: https://github.com/jeremylongshore/gastown-viewer-intent
-    description: Mission Control dashboard for Gastown multi-agent workspaces
-    license: MIT
-    install: |
-      bin.install "gvid"
-      bin.install "gvi-tui"
-    test: |
-      system "#{bin}/gvid", "--version"
+# brews: disabled pending HOMEBREW_TAP_TOKEN rotation (gastown-bjw).
+# The token currently lacks write access to intent-solutions-io/homebrew-tap
+# and the release workflow gets a 401 there. Disabled so the main release
+# (binaries on the GitHub Releases page) is not marked failed by the
+# downstream brew push. Re-enable + push the formula manually once a
+# valid token is configured.
+# brews:
+#   - name: gvid
+#     repository:
+#       owner: intent-solutions-io
+#       name: homebrew-tap
+#       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+#     homepage: https://github.com/jeremylongshore/gastown-viewer-intent
+#     description: Mission Control dashboard for Gastown multi-agent workspaces
+#     license: MIT
+#     install: |
+#       bin.install "gvid"
+#       bin.install "gvi-tui"
+#     test: |
+#       system "#{bin}/gvid", "--version"
 
 release:
   github:
