@@ -111,6 +111,13 @@ func (s *Server) registerRoutes() {
 	// Gas Town - Mail
 	s.mux.HandleFunc("GET /api/v1/town/mail/{address}", s.handleMail)
 
+	// Beads - Dolt sync state (header pill) — read-only per AT-DECR Q0
+	s.mux.HandleFunc("GET /api/v1/sync", s.handleSync)
+
+	// Beads - Human triage queue — READ-VIEW per AT-DECR Q0; no POST handlers
+	// in this burst (deferred behind the auth token gate from gastown-hu4).
+	s.mux.HandleFunc("GET /api/v1/human", s.handleHumanFlags)
+
 	// Static files — catch-all after API routes
 	s.serveStaticFiles()
 }

@@ -33,7 +33,9 @@ func (e *DefaultExecutor) Execute(ctx context.Context, workDir string, args ...s
 		stderrStr := stderr.String()
 
 		if strings.Contains(stderrStr, "not initialized") ||
-			strings.Contains(stderrStr, "no .beads") {
+			strings.Contains(stderrStr, "no .beads") ||
+			strings.Contains(stderrStr, "no beads database") ||
+			strings.Contains(stderrStr, "no active beads workspace") {
 			return nil, &NotInitializedError{Message: stderrStr}
 		}
 

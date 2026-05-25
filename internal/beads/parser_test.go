@@ -1,6 +1,8 @@
 package beads
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -255,4 +257,94 @@ func TestParseEmptyList(t *testing.T) {
 	if len(issues) != 0 {
 		t.Errorf("expected empty list, got %d issues", len(issues))
 	}
+}
+
+func TestParseDoltStatus(t *testing.T) {
+	// JSON shape captured from live bd 1.0.4 2026-05-24.
+	input := []byte(`{
+		"data_dir": "/home/jeremy/.beads/dolt",
+		"pid": 1247309,
+		"port": 45435,
+		"running": true,
+		"schema_version": 1
+	}`)
+	st, err := ParseDoltStatus(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !st.Running {
+		t.Error("Running: expected true")
+	}
+	if st.Port != 45435 {
+		t.Errorf("Port: got %d, want 45435", st.Port)
+	}
+	if st.SchemaVersion != 1 {
+		t.Errorf("SchemaVersion: got %d, want 1", st.SchemaVersion)
+	}
+	// Remotes is initialized non-nil so the JSON encoder emits [] not null.
+	if st.Remotes == nil {
+		t.Error("Remotes: expected non-nil empty slice")
+	}
+}
+
+func TestParseDoltStatus_NotRunning(t *testing.T) {
+	input := []byte(`{"running": false}`)
+	st, err := ParseDoltStatus(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if st.Running {
+		t.Error("Running: expected false")
+	}
+}
+
+func TestParseDoltStatus_Malformed(t *testing.T) {
+	if _, err := ParseDoltStatus([]byte(`not json`)); err == nil {
+		t.Error("expected error on malformed JSON")
+	}
+}
+
+func TestParseDoltRemotes(t *testing.T) {
+	input := []byte(`[
+		{"name": "origin", "sql_url": "https://example/sql", "cli_url": "https://example/cli", "status": "ok"},
+		{"name": "backup", "status": "auth_failed"}
+	]`)
+	got := ParseDoltRemotes(input)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 remotes, got %d", len(got))
+	}
+	if got[0].Name != "origin" || got[0].Status != "ok" {
+		t.Errorf("remote[0]: %+v", got[0])
+	}
+	if got[1].Name != "backup" || got[1].Status != "auth_failed" {
+		t.Errorf("remote[1]: %+v", got[1])
+	}
+	// Sanity: URL fields are stripped — they leak the workspace name into
+	// screen-recordings, so the wire response should never carry them.
+	gotJSON, _ := json.Marshal(got)
+	for _, banned := range []string{"sql_url", "cli_url", "https://"} {
+		if bytesContains(gotJSON, banned) {
+			t.Errorf("remote JSON should not include %q, got %s", banned, gotJSON)
+		}
+	}
+}
+
+func TestParseDoltRemotes_Null(t *testing.T) {
+	// bd emits the literal "null" when no remotes are configured. Must
+	// degrade to empty slice rather than nil-deref or returning null.
+	got := ParseDoltRemotes([]byte(`null`))
+	if got == nil || len(got) != 0 {
+		t.Errorf("expected non-nil empty slice for null input, got %v", got)
+	}
+}
+
+func TestParseDoltRemotes_Malformed(t *testing.T) {
+	got := ParseDoltRemotes([]byte(`not json`))
+	if got == nil || len(got) != 0 {
+		t.Errorf("expected non-nil empty slice on malformed JSON, got %v", got)
+	}
+}
+
+func bytesContains(haystack []byte, needle string) bool {
+	return strings.Contains(string(haystack), needle)
 }
