@@ -3,97 +3,80 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/intent-solutions-io/gastown-viewer-intent/internal/model"
 )
 
-// View represents the current view mode.
-type View int
-
-const (
-	ViewBoard View = iota
-	ViewIssue
-)
-
-// Model is the main TUI model.
+// Model is the main TUI model. Field ordering: client + transport,
+// per-focus data, dispatcher + key state, ui state.
 type Model struct {
-	client   *Client
+	client *Client
+
+	// per-focus data caches
 	board    *BoardResponse
 	issue    *model.Issue
-	view     View
+	memories *model.MemoriesResponse
+	human    *model.HumanFlagsResponse
+
+	// dispatcher + combo state
+	registry        *KeyRegistry
+	pendingComboKey string
+	pendingComboAt  time.Time
+
+	// ui state
+	focus    Focus
+	showHelp bool
 	err      error
 	loading  bool
 	spinner  spinner.Model
-	help     help.Model
-	keys     keyMap
-	cursor   int // selected column
-	issueCur int // selected issue in column
-	width    int
-	height   int
+
+	// board cursor
+	cursor   int
+	issueCur int
+
+	// memories cursor + search + detail toggle
+	memCur         int
+	memDetailOpen  bool
+	memSearching   bool
+	memSearchInput string
+
+	// triage cursor
+	humanCur int
+
+	width  int
+	height int
 }
 
-// keyMap defines keybindings.
-type keyMap struct {
-	Left    key.Binding
-	Right   key.Binding
-	Up      key.Binding
-	Down    key.Binding
-	Enter   key.Binding
-	Back    key.Binding
-	Refresh key.Binding
-	Quit    key.Binding
-	Help    key.Binding
-}
-
-func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Left, k.Right, k.Enter, k.Quit, k.Help}
-}
-
-func (k keyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{
-		{k.Left, k.Right, k.Up, k.Down},
-		{k.Enter, k.Back, k.Refresh, k.Quit},
-	}
-}
-
-var defaultKeys = keyMap{
-	Left:    key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("<-/h", "left")),
-	Right:   key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("->/l", "right")),
-	Up:      key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("^/k", "up")),
-	Down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("v/j", "down")),
-	Enter:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
-	Back:    key.NewBinding(key.WithKeys("esc", "backspace"), key.WithHelp("esc", "back")),
-	Refresh: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
-	Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
-	Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-}
-
-// New creates a new TUI model.
+// New creates a new TUI model wired to the given daemon URL.
 func New(apiURL string) Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
 	return Model{
-		client:  NewClient(apiURL),
-		spinner: s,
-		help:    help.New(),
-		keys:    defaultKeys,
-		loading: true,
-		width:   80,
-		height:  24,
+		client:   NewClient(apiURL),
+		spinner:  s,
+		registry: defaultRegistry(),
+		loading:  true,
+		width:    80,
+		height:   24,
+		focus:    FocusBoard,
 	}
 }
 
-// Messages
+// --- Messages ---
+
 type boardMsg *BoardResponse
 type issueMsg *model.Issue
+type memoriesMsg *model.MemoriesResponse
+type humanMsg *model.HumanFlagsResponse
 type errMsg error
+
+// --- Command builders ---
 
 func (m Model) fetchBoard() tea.Msg {
 	board, err := m.client.Board()
@@ -113,88 +96,75 @@ func (m Model) fetchIssue(id string) tea.Cmd {
 	}
 }
 
-// Init initializes the model.
+// fetchMemoriesCmd returns a tea.Cmd that loads memories. If q is
+// non-empty, it hits the search endpoint; otherwise the full list.
+func (m Model) fetchMemoriesCmd(q string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := m.client.SearchMemories(q)
+		if err != nil {
+			return errMsg(err)
+		}
+		return memoriesMsg(resp)
+	}
+}
+
+func (m Model) fetchHumanFlagsCmd() tea.Cmd {
+	return func() tea.Msg {
+		resp, err := m.client.HumanFlags()
+		if err != nil {
+			return errMsg(err)
+		}
+		return humanMsg(resp)
+	}
+}
+
+// refreshCurrentFocus returns the tea.Cmd that re-fetches whatever the
+// current focus shows. Triggered by `r` from anywhere.
+func (m Model) refreshCurrentFocus() tea.Cmd {
+	switch m.focus {
+	case FocusMemories:
+		return m.fetchMemoriesCmd(m.memSearchInput)
+	case FocusTriage:
+		return m.fetchHumanFlagsCmd()
+	case FocusDetail:
+		if m.issue != nil {
+			return m.fetchIssue(m.issue.ID)
+		}
+		return m.fetchBoard
+	default:
+		return m.fetchBoard
+	}
+}
+
+// --- Init / Update / View ---
+
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(m.spinner.Tick, m.fetchBoard)
 }
 
-// Update handles messages.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.help.Width = msg.Width
 		return m, nil
 
 	case tea.KeyMsg:
-		switch {
-		case key.Matches(msg, m.keys.Quit):
-			return m, tea.Quit
-
-		case key.Matches(msg, m.keys.Help):
-			m.help.ShowAll = !m.help.ShowAll
-			return m, nil
-
-		case key.Matches(msg, m.keys.Refresh):
-			m.loading = true
-			m.err = nil
-			return m, tea.Batch(m.spinner.Tick, m.fetchBoard)
-
-		case key.Matches(msg, m.keys.Back):
-			if m.view == ViewIssue {
-				m.view = ViewBoard
-				m.issue = nil
-			}
-			return m, nil
-
-		case key.Matches(msg, m.keys.Left):
-			if m.view == ViewBoard && m.board != nil && m.cursor > 0 {
-				m.cursor--
-				m.issueCur = 0
-			}
-			return m, nil
-
-		case key.Matches(msg, m.keys.Right):
-			if m.view == ViewBoard && m.board != nil && m.cursor < len(m.board.Columns)-1 {
-				m.cursor++
-				m.issueCur = 0
-			}
-			return m, nil
-
-		case key.Matches(msg, m.keys.Up):
-			if m.view == ViewBoard && m.issueCur > 0 {
-				m.issueCur--
-			}
-			return m, nil
-
-		case key.Matches(msg, m.keys.Down):
-			if m.view == ViewBoard && m.board != nil && m.cursor < len(m.board.Columns) {
-				col := m.board.Columns[m.cursor]
-				if m.issueCur < len(col.Issues)-1 {
-					m.issueCur++
-				}
-			}
-			return m, nil
-
-		case key.Matches(msg, m.keys.Enter):
-			if m.view == ViewBoard && m.board != nil {
-				if m.cursor < len(m.board.Columns) {
-					col := m.board.Columns[m.cursor]
-					if m.issueCur < len(col.Issues) {
-						issue := col.Issues[m.issueCur]
-						m.loading = true
-						return m, tea.Batch(m.spinner.Tick, m.fetchIssue(issue.ID))
-					}
-				}
-			}
-			return m, nil
-		}
+		return m.handleKey(msg)
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
+
+	case comboTimeoutMsg:
+		// Only clear if this timeout matches the still-pending key —
+		// otherwise a later combo already replaced the pending state.
+		if !m.pendingComboAt.IsZero() && msg.at.Equal(m.pendingComboAt) {
+			m.pendingComboKey = ""
+			m.pendingComboAt = time.Time{}
+		}
+		return m, nil
 
 	case boardMsg:
 		m.loading = false
@@ -205,7 +175,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case issueMsg:
 		m.loading = false
 		m.issue = msg
-		m.view = ViewIssue
+		m.focus = FocusDetail
+		m.err = nil
+		return m, nil
+
+	case memoriesMsg:
+		m.loading = false
+		m.memories = msg
+		if m.memories != nil && m.memCur >= len(m.memories.Memories) {
+			m.memCur = 0
+		}
+		m.err = nil
+		return m, nil
+
+	case humanMsg:
+		m.loading = false
+		m.human = msg
+		if m.human != nil && m.humanCur >= len(m.human.Flags) {
+			m.humanCur = 0
+		}
 		m.err = nil
 		return m, nil
 
@@ -218,12 +206,90 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// Styles
+// handleKey routes a tea.KeyMsg through the search-input capture (when
+// active), then the combo state machine, then the registry. The
+// dispatcher returns matched=false only when no binding fires; in that
+// case we silently drop the key.
+func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	k := msg.String()
+
+	// Search-mode capture on Memories tab. While searching, regular
+	// keys feed the input; enter commits, esc aborts.
+	if m.focus == FocusMemories && m.memSearching {
+		switch k {
+		case "enter":
+			m.memSearching = false
+			m.loading = true
+			return m, tea.Batch(m.spinner.Tick, m.fetchMemoriesCmd(m.memSearchInput))
+		case "esc":
+			m.memSearching = false
+			m.memSearchInput = ""
+			m.loading = true
+			return m, tea.Batch(m.spinner.Tick, m.fetchMemoriesCmd(""))
+		case "backspace":
+			if n := len(m.memSearchInput); n > 0 {
+				m.memSearchInput = m.memSearchInput[:n-1]
+			}
+			return m, nil
+		}
+		if len(k) == 1 {
+			m.memSearchInput += k
+			return m, nil
+		}
+		return m, nil
+	}
+
+	// Combo finalization — second key after a pending leader.
+	if m.pendingComboKey != "" {
+		pending := m.pendingComboKey
+		m.pendingComboKey = ""
+		m.pendingComboAt = time.Time{}
+		if newModel, cmd, matched := m.registry.DispatchCombo(m, m.focus, pending, k); matched {
+			return newModel, cmd
+		}
+		// Fall through and let `k` be dispatched as a fresh press.
+	}
+
+	// Combo leader — stash and arm timeout.
+	if m.registry.IsComboLeader(m.focus, k) {
+		now := time.Now()
+		m.pendingComboKey = k
+		m.pendingComboAt = now
+		return m, comboTimeoutCmd(now)
+	}
+
+	// Help overlay swallows everything except `?`, `q`, ctrl+c, and
+	// the tab-switch keys — those are the only Global bindings the
+	// registry exposes outside the gameplay.
+	if m.showHelp {
+		switch k {
+		case "?", "q", "ctrl+c", "1", "2", "3", "b", "m", "t":
+			// fall through to dispatcher
+		default:
+			return m, nil
+		}
+	}
+
+	newModel, cmd, _ := m.registry.Dispatch(m, m.focus, k)
+	return newModel, cmd
+}
+
+// --- Styles ---
+
 var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("205")).
 			MarginBottom(1)
+
+	tabActiveStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("205")).
+			Padding(0, 1)
+
+	tabInactiveStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("245")).
+				Padding(0, 1)
 
 	columnStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -267,6 +333,14 @@ var (
 
 	labelStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("245"))
+
+	redactionMarkerStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("214")).
+				Bold(true)
+
+	hintStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("245")).
+			Italic(true)
 )
 
 // View renders the model.
@@ -274,21 +348,44 @@ func (m Model) View() string {
 	if m.err != nil {
 		return m.viewError()
 	}
-
-	if m.loading && m.board == nil {
+	if m.loading && m.board == nil && m.focus == FocusBoard {
 		return m.viewLoading()
 	}
 
+	tabs := m.viewTabs()
+
 	var content string
-	switch m.view {
-	case ViewBoard:
+	switch m.focus {
+	case FocusBoard:
 		content = m.viewBoard()
-	case ViewIssue:
+	case FocusDetail:
 		content = m.viewIssue()
+	case FocusMemories:
+		content = m.viewMemories()
+	case FocusTriage:
+		content = m.viewTriage()
 	}
 
-	helpView := m.help.View(m.keys)
-	return content + "\n\n" + helpView
+	body := tabs + "\n" + content
+	if m.showHelp {
+		body += "\n\n" + m.viewHelp()
+	} else {
+		body += "\n\n" + hintStyle.Render("? help · q quit · 1/2/3 tabs")
+	}
+	return body
+}
+
+// viewTabs renders the top tab bar (Board · Memories · Triage). Detail
+// is treated as part of Board for tab-highlight purposes.
+func (m Model) viewTabs() string {
+	tab := func(label string, focus Focus) string {
+		active := m.focus == focus || (focus == FocusBoard && m.focus == FocusDetail)
+		if active {
+			return tabActiveStyle.Render("[ " + label + " ]")
+		}
+		return tabInactiveStyle.Render("  " + label + "  ")
+	}
+	return tab("Board", FocusBoard) + tab("Memories", FocusMemories) + tab("Triage", FocusTriage)
 }
 
 func (m Model) viewLoading() string {
@@ -308,14 +405,12 @@ func (m Model) viewBoard() string {
 
 	var b strings.Builder
 
-	// Title
 	title := titleStyle.Render("Gastown Viewer Intent")
 	if m.loading {
 		title += " " + m.spinner.View()
 	}
 	b.WriteString(title + "\n\n")
 
-	// Columns
 	var columns []string
 	for i, col := range m.board.Columns {
 		colStyle := columnStyle
@@ -323,7 +418,6 @@ func (m Model) viewBoard() string {
 			colStyle = selectedColumnStyle
 		}
 
-		// Column header with status color
 		var headerStyle lipgloss.Style
 		switch col.Status {
 		case model.StatusPending:
@@ -340,14 +434,12 @@ func (m Model) viewBoard() string {
 
 		header := headerStyle.Render(fmt.Sprintf("%s (%d)", col.Label, col.Count))
 
-		// Issues
 		var issues []string
 		for j, issue := range col.Issues {
 			style := issueStyle
 			if i == m.cursor && j == m.issueCur {
 				style = selectedIssueStyle
 			}
-			// Truncate title
 			title := issue.Title
 			if len(title) > 20 {
 				title = title[:17] + "..."
@@ -360,7 +452,6 @@ func (m Model) viewBoard() string {
 	}
 
 	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, columns...))
-
 	return b.String()
 }
 
@@ -370,36 +461,28 @@ func (m Model) viewIssue() string {
 	}
 
 	var b strings.Builder
-
-	// Back navigation hint
 	b.WriteString(labelStyle.Render("< Press ESC to go back") + "\n\n")
-
-	// Title
 	b.WriteString(titleStyle.Render(m.issue.Title) + "\n")
 
-	// Status and priority
-	var statusStyle lipgloss.Style
+	var sStyle lipgloss.Style
 	switch m.issue.Status {
 	case model.StatusPending:
-		statusStyle = statusPending
+		sStyle = statusPending
 	case model.StatusInProgress:
-		statusStyle = statusInProgress
+		sStyle = statusInProgress
 	case model.StatusDone:
-		statusStyle = statusDone
+		sStyle = statusDone
 	case model.StatusBlocked:
-		statusStyle = statusBlocked
+		sStyle = statusBlocked
 	}
 	b.WriteString(fmt.Sprintf("%s  %s\n\n",
-		statusStyle.Render(string(m.issue.Status)),
+		sStyle.Render(string(m.issue.Status)),
 		labelStyle.Render(fmt.Sprintf("[%s]", m.issue.Priority))))
 
-	// ID
 	b.WriteString(labelStyle.Render("ID: ") + m.issue.ID + "\n\n")
 
-	// Description
 	if m.issue.Description != "" {
 		b.WriteString(labelStyle.Render("Description:\n"))
-		// Wrap description
 		desc := m.issue.Description
 		if len(desc) > 500 {
 			desc = desc[:497] + "..."
@@ -407,7 +490,6 @@ func (m Model) viewIssue() string {
 		b.WriteString(desc + "\n\n")
 	}
 
-	// Done when
 	if len(m.issue.DoneWhen) > 0 {
 		b.WriteString(labelStyle.Render("Done when:\n"))
 		for _, item := range m.issue.DoneWhen {
@@ -415,8 +497,6 @@ func (m Model) viewIssue() string {
 		}
 		b.WriteString("\n")
 	}
-
-	// Dependencies
 	if len(m.issue.Blocks) > 0 {
 		b.WriteString(labelStyle.Render("Blocks:\n"))
 		for _, dep := range m.issue.Blocks {
@@ -424,7 +504,6 @@ func (m Model) viewIssue() string {
 		}
 		b.WriteString("\n")
 	}
-
 	if len(m.issue.BlockedBy) > 0 {
 		b.WriteString(labelStyle.Render("Blocked by:\n"))
 		for _, dep := range m.issue.BlockedBy {
@@ -433,5 +512,9 @@ func (m Model) viewIssue() string {
 		b.WriteString("\n")
 	}
 
-	return detailStyle.Width(m.width - 4).Render(b.String())
+	width := m.width - 4
+	if width < 20 {
+		width = 20
+	}
+	return detailStyle.Width(width).Render(b.String())
 }
