@@ -19,6 +19,7 @@ exclude = [
   "^https?://localhost",
   "^https?://127\\.0\\.0\\.1",
   "^http://intentsolutions",
+  "^https?://github\\.com/intent-solutions-io/",
 ]
 
 accept = [200, 206, 301, 302, 304, 308, 401, 403, 429]

@@ -29,7 +29,7 @@ from typing import Iterable
 # lowercase alphanumerics plus hyphens (1-4 words enforced loosely as <= 60
 # chars). Sub-doc numeric suffix variant (006-1) is allowed.
 FILENAME_RE = re.compile(
-    r"^(?:000|[0-9]{3}[a-z]?)(?:-[0-9]+)?-[A-Z]{2}-[A-Z]{4}-[a-z0-9][a-z0-9-]{0,59}\.[a-z]{2,5}$"
+    r"^(?:000|[0-9]{3}[a-z]?)(?:-[0-9]+)?-[A-Z]{2}-[A-Z]{4,6}-[a-z0-9][a-z0-9-]{0,59}\.[a-z]{2,5}$"
 )
 
 # v4.2/legacy pattern — files prefixed `6767-` were the canonical cross-repo

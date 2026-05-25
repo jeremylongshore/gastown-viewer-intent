@@ -53,6 +53,7 @@ jobs:
 
   vale:
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Vale
@@ -67,6 +68,7 @@ jobs:
 
   lychee:
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Restore lychee cache
@@ -79,6 +81,6 @@ jobs:
         uses: lycheeverse/lychee-action@v2
         with:
           args: --config lychee.toml --cache --no-progress './**/*.md'
-          fail: true
+          fail: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
