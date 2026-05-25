@@ -57,6 +57,7 @@ The decision touches a confidential-data surface (`bd memories`), a multi-produc
 ### Q0 — Execute Option B?
 
 **Vote tally:**
+
 - **B-variants** (5): CTO (B-prime), GC (B + memory classification gate), CMO (B reframed as trilogy demo), CSO (B defensively), VP DevRel (B private)
 - **B-minus** (1, novel option): CISO
 - **Option A defer** (1, dissent): CFO
@@ -82,6 +83,7 @@ The decision touches a confidential-data surface (`bd memories`), a multi-produc
 ### **DECISION (Q0): Adopt CISO's Option B-minus, with CFO + CTO + GC + CFO binding constraints stacked.**
 
 **What gets built:**
+
 1. Audit-harness install as Step 0 (overlaps with Q3 floor)
 2. Janitorial sweep (close PR #7 or merge, land PR #8 Windows compat, fix root-level `node_modules/` + `package.json` + `package-lock.json` placement)
 3. **Week-1 prerequisite work** (CTO binding constraint): parser.go:112 fix with regression test + `molecule.json → wisps` adapter rewrite + drop file-parsing path. These MUST land before any new panel.
@@ -91,6 +93,7 @@ The decision touches a confidential-data surface (`bd memories`), a multi-produc
 7. `defer --until` preservation (parser.go:112 follow-on)
 
 **Burst-containment binding constraints (CFO stacking):**
+
 - **Hard-cap at 3 calendar weeks single-track** — burst window is 2026-05-26 → 2026-06-15
 - **Pause, don't extend, on client intrusion.** Any inbound from Kobiton M2 / Nixtla Phase 2 / Mudit/Polygon pauses the burst; resume in next available window. Do NOT trade client work for viewer work.
 - **Named outcome metric:** before/after measurement of `alt-tabs/day to terminal for bd memories/dolt/human commands` via tmux session log review at end of burst. No metric = the council deliberation was theatre.
@@ -125,6 +128,7 @@ The decision touches a confidential-data surface (`bd memories`), a multi-produc
 ### **DECISION (Q1): Supported-version matrix in README + CISO 48hr security-fast-path binding constraint.**
 
 **What gets built:**
+
 - `README.md` publishes current supported gt version range (e.g., "viewer tested against gt 0.8.x–0.9.x; gt 0.10+ not yet supported")
 - Refresh window is opportunistic on user-pain trigger (Jeremy's gt usage breaks the viewer, OR a partner asks) — no calendar cadence
 - **CISO binding constraint:** Weekly CI smoke test against `gt@latest`. On failure, automated bead opens. Any gt release with `security:` in changelog triggers 48hr fast-path SLA (drop everything, ship viewer compat).
@@ -159,6 +163,7 @@ The decision touches a confidential-data surface (`bd memories`), a multi-produc
 ### **DECISION (Q2): Read-only memories panel — ARCHITECTURAL INVARIANT.**
 
 **What gets built:**
+
 - **Zero state-mutating endpoints under `/api/v1/memories/*`.** No POST, no PUT, no PATCH, no DELETE.
 - Edit affordance: "Edit" button on the memories panel shells terminal to `bd remember <id>` OR copies the command to clipboard (CTO's CLI-passthrough — UX feels write-capable without breaking single-writer invariant)
 - Invariant documented in BOTH:
@@ -166,6 +171,7 @@ The decision touches a confidential-data surface (`bd memories`), a multi-produc
   - `gastown-viewer-intent/THREAT_MODEL.md` — new file checked in this burst per CISO
 
 **Stacked minority binding constraints:**
+
 - **CMO (preserve narrative optionality):** The internal API layer is designed write-capable in its contract shape, so a future read-write decision can be made WITHOUT backend rework. The UI never exposes write affordances; the contract is forward-compatible.
 - **GC (partner-data protection):** Classification policy doc (`005-PP-POLICY-memories-classification-...md`) lands before the memories panel. Partner-name denylist (kobiton, nixtla, mudit, polygon, lit, elm) triggers redaction overlay. `autocomplete=off` on every input element in the viewer (even read-only search boxes).
 - **CISO (secret-pattern hard line):** Memories containing strings matching secret patterns (`sk-`, `ghp_`, `AKIA`, `gho_`, `glpat-`, etc.) render redacted-by-default with explicit "show" toggle; toggle does not persist across page reloads.
@@ -179,6 +185,7 @@ The decision touches a confidential-data surface (`bd memories`), a multi-produc
 ### Q3 — Test debt?
 
 **Vote tally:** Significant variation. Universal floor (7/7): install `@intentsolutions/audit-harness`. Above that:
+
 - Install harness + ship at current bar with documented policy (CFO, CSO): 2
 - Smoke-test-per-panel (VP DevRel): 1
 - Bifurcated — read-only at current bar, state-changers REQUIRE auth tests (CISO, GC similar): 2
@@ -206,26 +213,32 @@ The decision touches a confidential-data surface (`bd memories`), a multi-produc
 ### **DECISION (Q3): Install audit-harness + bifurcated test policy + smoke-test-per-panel floor.**
 
 **What gets built:**
+
 1. **Step 0 — Install `@intentsolutions/audit-harness`** as dev dependency (`pnpm add -D @intentsolutions/audit-harness`). Run `pnpm exec audit-harness init` to hash-pin policy files. L1 git hooks active before any panel work begins. **Non-negotiable per IS SOP (7/7 council agreement).**
 2. **Baseline regression tests** before new panel work (CTO binding constraint):
    - `parser.go:112` regression test asserting `defer --until` round-trip preserves the date
    - molecule.json → wisps adapter integration test against fixture wisps store
+
 3. **Per-panel smoke tests** before merge (VP DevRel floor):
    - One Vitest + React Testing Library happy-path test per new panel (memories, dolt-sync pill, human triage read-view)
    - Tests written against the POST-wisps data model (CSO binding constraint — no immediately-stale tests)
+
 4. **Redaction-logic test** on memories rendering (GC binding constraint):
    - Unit test asserting partner-name denylist strings render as redacted overlay
    - Unit test asserting secret-pattern strings (sk-/ghp_/AKIA/etc.) render redacted-by-default
+
 5. **`tests/TESTING.md`** documents the calibrated-investment policy explicitly (CSO SOP-consistency binding constraint):
    - "Read-only handlers ship at current test bar per repo-type-applicability"
    - "State-changing handlers require auth-pattern test suite as merge gate"
    - "Web coverage backfill bead `<bead-id>` with hard 30-day SLA"
+
 6. **State-changing handler gate** (CISO binding constraint — applies to ALL future POST/PUT/PATCH/DELETE work, none in this burst):
    - Auth-pattern test suite required: missing-token rejected, wrong-origin rejected, actor-field populated, audit-log written
 
 **Backfill bead deadline (stacked from CTO+VP-DevRel+CMO):** A bead is filed at burst start (`backfill-web-tests-by-2026-07-15`) with explicit auto-escalation if missed. If the deadline slips, the council reconvenes before any further viewer work.
 
 **Minority positions preserved verbatim:**
+
 - **CTO:** *"Test backfill is cheapest while the panels are being written, not later from cold context. Burst-pattern maintainers cannot reliably honor follow-on commitments; the data is on our own server."*
 - **CSO:** *"Costly mistake isn't shipping with zero web coverage; it's shipping WITHOUT the harness installed AND WITHOUT explicit policy. That creates the visible SOP-vs-repo inconsistency."*
 
@@ -244,6 +257,7 @@ Tabulated from each seat's Council Memo at the close of their position:
 | **VP DevRel** | Every question routes through "does this repo ever go public?" Choose options defensible-if-public and cheap-if-private | **Q2** — read-write shipped private and later opened to OSS becomes repo's defining moment via first destructive-action bug report |
 
 **Tally on most costly to recover from:**
+
 - **Q2: 5 seats** (CTO, GC, CMO, CISO, VP DevRel) — overwhelming convergence
 - **Q1: 1 seat** (CFO)
 - **Q3: 1 seat** (CSO)
@@ -307,6 +321,7 @@ Two genuine lone dissents were captured verbatim (CFO on Q0, CMO on Q2) and inte
    - End-of-burst measurement: alt-tabs/day to terminal before vs. after; council reconvenes if no meaningful reduction
 
 **Deferred to future bursts (do NOT scope-creep into this one):**
+
 - Triage POST handlers (`respond` / `dismiss`) — separate decision after auth surface tested
 - Dogs / patrols visibility (gt v0.9)
 - Bors-style merge queue panel (gt v0.9)
