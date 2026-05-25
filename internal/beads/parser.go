@@ -10,22 +10,27 @@ import (
 
 // BDIssue represents an issue as returned by bd --json.
 type BDIssue struct {
-	ID              string        `json:"id"`
-	Title           string        `json:"title"`
-	Description     string        `json:"description"`
-	Status          string        `json:"status"`
-	Priority        int           `json:"priority"`
-	IssueType       string        `json:"issue_type"`
-	CreatedAt       time.Time     `json:"created_at"`
-	UpdatedAt       time.Time     `json:"updated_at"`
-	ClosedAt        *time.Time    `json:"closed_at,omitempty"`
-	DependencyCount int           `json:"dependency_count,omitempty"`
-	DependentCount  int           `json:"dependent_count,omitempty"`
-	Dependencies    []BDIssue     `json:"dependencies,omitempty"`
-	Dependents      []BDIssue     `json:"dependents,omitempty"`
-	BlockedBy       []string      `json:"blocked_by,omitempty"`
-	BlockedByCount  int           `json:"blocked_by_count,omitempty"`
-	DepType         string        `json:"dependency_type,omitempty"`
+	ID          string     `json:"id"`
+	Title       string     `json:"title"`
+	Description string     `json:"description"`
+	Status      string     `json:"status"`
+	Priority    int        `json:"priority"`
+	IssueType   string     `json:"issue_type"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	ClosedAt    *time.Time `json:"closed_at,omitempty"`
+	// DeferUntil is the wake-up timestamp set by `bd defer --until`. Only present
+	// when Status == "deferred"; absent (nil) for any other status. Pre-1.0 versions
+	// of the viewer dropped this field on the floor and remapped deferred → pending,
+	// losing the until-date — fixed in gastown-7fq.
+	DeferUntil      *time.Time `json:"defer_until,omitempty"`
+	DependencyCount int        `json:"dependency_count,omitempty"`
+	DependentCount  int        `json:"dependent_count,omitempty"`
+	Dependencies    []BDIssue  `json:"dependencies,omitempty"`
+	Dependents      []BDIssue  `json:"dependents,omitempty"`
+	BlockedBy       []string   `json:"blocked_by,omitempty"`
+	BlockedByCount  int        `json:"blocked_by_count,omitempty"`
+	DepType         string     `json:"dependency_type,omitempty"`
 }
 
 // ToModelIssue converts a BDIssue to the domain model Issue.
@@ -45,6 +50,15 @@ func (bi *BDIssue) ToModelIssue() model.Issue {
 
 	// Parse "Done when:" from description
 	issue.DoneWhen = parseDoneWhen(bi.Description)
+
+	// Preserve the defer-until timestamp when the issue is in the deferred state.
+	// We only attach DeferredUntil when the status is actually deferred so older
+	// updates (when the until-date was set then later cleared by un-deferring)
+	// do not leak a stale timestamp into a now-pending issue.
+	if issue.Status == model.StatusDeferred && bi.DeferUntil != nil {
+		t := *bi.DeferUntil
+		issue.DeferredUntil = &t
+	}
 
 	// Map dependencies to BlockedBy (things this issue depends on)
 	for _, dep := range bi.Dependencies {
@@ -108,6 +122,8 @@ func mapStatus(s string) model.Status {
 		return model.StatusDone
 	case "blocked":
 		return model.StatusBlocked
+	case "deferred":
+		return model.StatusDeferred
 	default:
 		return model.StatusPending
 	}
