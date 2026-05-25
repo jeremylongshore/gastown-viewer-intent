@@ -8,7 +8,6 @@
 
 **Links:** [Gist One-Pager](https://gist.github.com/jeremylongshore/cd5d24298d05140eca8a3ef2cb2773f3) · [GitHub](https://github.com/jeremylongshore/gastown-viewer-intent) · [v0.5.0 Release](https://github.com/jeremylongshore/gastown-viewer-intent/releases/tag/v0.5.0)
 
-
 ## What's New in v0.5.0 (Phase 2 — Option B-minus)
 
 Targeted daily-value refresh per the
