@@ -68,10 +68,12 @@ this doc per Q3 binding constraint). Auto-escalates if the date slips —
 the council reconvenes before any further viewer work.
 
 **Coverage target when backfilled:**
+
 - one smoke test per panel (Vitest + React Testing Library): renders without crash, displays mocked API data correctly
 - redaction-logic unit tests on the memories panel (when `gastown-fp0`
   lands the panel) — Class A + Class B coverage per
   `000-docs/005-PP-POLICY-memories-classification-2026-05-24.md`
+
 - 60% line coverage floor on new code only — pre-existing code is not
   retroactively gated
 
@@ -85,8 +87,10 @@ installed plus the daemon running, for one user's benefit. The
 opportunity cost is real.
 
 **Follow-up:** no scheduled bead. L6 will be considered if/when:
+
 - the viewer opens to OSS contributors (currently private — VP DevRel
   council seat recommended staying private)
+
 - a defect ships that would have been caught by L6 specifically (not by
   L4 integration). This trigger has not fired in the history of the
   repo; if it fires twice, file the bead unconditionally.
@@ -108,6 +112,7 @@ reservation. The first POST route that lands must add this test class.
 ## 5. Hash pinning
 
 The audit-harness `.harness-hash` manifest is pinned against:
+
 - this file (`tests/TESTING.md`)
 - `.markdownlint-cli2.jsonc`
 - `.vale.ini`
@@ -138,9 +143,11 @@ edits whose hash doesn't match the pin.
 ## 7. When to update this document
 
 This file is rebuilt when any of these change:
+
 - A new layer is added to the 7-layer taxonomy.
 - The repo gains a new component (a `cmd/...` binary, a new package, a
   new web target).
+
 - A deliberate gap from § 3 is closed.
 - The council ratifies a new test-investment level.
 
