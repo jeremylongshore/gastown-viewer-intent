@@ -49,7 +49,7 @@ nfpms:
   - id: packages
     package_name: gvid
     vendor: Intent Solutions
-    homepage: https://github.com/intent-solutions-io/gastown-viewer-intent
+    homepage: https://github.com/jeremylongshore/gastown-viewer-intent
     maintainer: Jeremy Longshore <jeremy@intent-solutions.io>
     description: Mission Control dashboard for Gastown multi-agent workspaces
     license: MIT
@@ -80,7 +80,7 @@ brews:
       owner: intent-solutions-io
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    homepage: https://github.com/intent-solutions-io/gastown-viewer-intent
+    homepage: https://github.com/jeremylongshore/gastown-viewer-intent
     description: Mission Control dashboard for Gastown multi-agent workspaces
     license: MIT
     install: |
@@ -91,7 +91,7 @@ brews:
 
 release:
   github:
-    owner: intent-solutions-io
+    owner: jeremylongshore
     name: gastown-viewer-intent
   draft: false
   prerelease: auto
