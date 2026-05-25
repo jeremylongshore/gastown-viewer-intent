@@ -1,9 +1,13 @@
-# Gastown Viewer Intent
+# gastown-viewer-intent v0.5.0
 
-> Mission Control dashboard for Beads and Gas Town multi-agent workspaces.
+> Local-first Mission Control dashboard for Beads + Gas Town, with a read-only-forever memory panel.
 
-[![Release](https://img.shields.io/github/v/release/intent-solutions-io/gastown-viewer-intent)](https://github.com/intent-solutions-io/gastown-viewer-intent/releases)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/jeremylongshore/gastown-viewer-intent/actions/workflows/ci.yaml/badge.svg)](https://github.com/jeremylongshore/gastown-viewer-intent/actions/workflows/ci.yaml)
+[![Release](https://img.shields.io/github/v/release/jeremylongshore/gastown-viewer-intent)](https://github.com/jeremylongshore/gastown-viewer-intent/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+**Links:** [Gist One-Pager](https://gist.github.com/jeremylongshore/cd5d24298d05140eca8a3ef2cb2773f3) · [GitHub](https://github.com/jeremylongshore/gastown-viewer-intent) · [v0.5.0 Release](https://github.com/jeremylongshore/gastown-viewer-intent/releases/tag/v0.5.0)
+
 
 ## What's New in v0.5.0 (Phase 2 — Option B-minus)
 
