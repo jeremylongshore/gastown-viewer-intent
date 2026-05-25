@@ -107,7 +107,7 @@
 
 **FR-4**: Get single issue with full details
 
-- Acceptance: `/api/v1/issues/:id` returns issue with children, blocks, blocked_by
+- Acceptance: `/api/v1/issues/{id}` returns issue with children, blocks, blocked_by
 
 **FR-5**: Board view returns issues grouped by status
 
@@ -193,7 +193,7 @@
 
 ## 6. Technical Architecture
 
-See: `000-docs/002-ADR-gastown-viewer-intent.md`
+See: `000-docs/002-AT-ADEC-gastown-viewer-intent.md`
 
 **Summary**:
 

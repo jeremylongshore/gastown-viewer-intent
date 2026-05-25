@@ -133,7 +133,7 @@ Host: localhost:7070
 
 ---
 
-### GET /issues/:id
+### GET /issues/{id}
 
 Get single issue with full details including children and dependency information.
 
