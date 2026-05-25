@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/intent-solutions-io/gastown-viewer-intent/internal/model"
@@ -107,4 +108,72 @@ func (c *Client) Issue(id string) (*model.Issue, error) {
 	}
 
 	return &issue, nil
+}
+
+// decodeJSON is the shared response handler for the new memory/triage
+// endpoints. It enforces 200 OK before attempting to JSON-decode, so a
+// daemon error (BD_NOT_FOUND, BEADS_NOT_INIT, etc.) surfaces as a
+// readable status line instead of a confusing JSON-unmarshal error
+// against an error envelope.
+func decodeJSON(resp *http.Response, out any) error {
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		// Best-effort: include the response body if it's short enough
+		// to be useful (the daemon's error envelope is ~80 bytes).
+		if len(body) > 0 && len(body) < 512 {
+			return fmt.Errorf("daemon returned %s: %s", resp.Status, string(body))
+		}
+		return fmt.Errorf("daemon returned %s", resp.Status)
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// Memories fetches the full memory list from the daemon. The daemon
+// applies the 005-PP-POLICY redaction layer before serialization, so
+// the TUI always renders pre-redacted content — there is no reveal
+// path in the TUI (Council Q2 read-only-forever invariant; reveal is
+// only available via the bd CLI directly).
+func (c *Client) Memories() (*model.MemoriesResponse, error) {
+	resp, err := c.httpClient.Get(c.baseURL + "/api/v1/memories")
+	if err != nil {
+		return nil, fmt.Errorf("connection failed: %w", err)
+	}
+	var out model.MemoriesResponse
+	if err := decodeJSON(resp, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SearchMemories proxies to the daemon's substring search endpoint.
+// Empty q falls back to the full list (matches daemon + bd semantics).
+func (c *Client) SearchMemories(q string) (*model.MemoriesResponse, error) {
+	if q == "" {
+		return c.Memories()
+	}
+	u := c.baseURL + "/api/v1/memories/search?q=" + url.QueryEscape(q)
+	resp, err := c.httpClient.Get(u)
+	if err != nil {
+		return nil, fmt.Errorf("connection failed: %w", err)
+	}
+	var out model.MemoriesResponse
+	if err := decodeJSON(resp, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// HumanFlags fetches the read-only human-decision triage queue. The
+// daemon returns an empty Flags slice (not nil) when nothing is flagged.
+func (c *Client) HumanFlags() (*model.HumanFlagsResponse, error) {
+	resp, err := c.httpClient.Get(c.baseURL + "/api/v1/human")
+	if err != nil {
+		return nil, fmt.Errorf("connection failed: %w", err)
+	}
+	var out model.HumanFlagsResponse
+	if err := decodeJSON(resp, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
