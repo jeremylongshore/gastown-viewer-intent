@@ -11,15 +11,20 @@
 The Gastown Viewer Intent daemon (`gvid`) exposes a RESTful JSON API for querying Beads issue data. All endpoints are read-only for MVP.
 
 ### Authentication
+
 None required (local-first, single-user).
 
 ### Content Types
+
 - Request: N/A (GET only for MVP)
 - Response: `application/json` (except SSE endpoint)
 
 ### CORS
+
 Default headers for local development:
+
 ```
+
 Access-Control-Allow-Origin: http://localhost:5173
 Access-Control-Allow-Methods: GET, OPTIONS
 Access-Control-Allow-Headers: Content-Type
@@ -34,13 +39,17 @@ Access-Control-Allow-Headers: Content-Type
 Health check endpoint. Returns daemon status and Beads initialization state.
 
 **Request**
+
 ```http
+
 GET /api/v1/health HTTP/1.1
 Host: localhost:7070
 ```
 
 **Response (200 OK)**
+
 ```json
+
 {
   "status": "ok",
   "beads_initialized": true,
@@ -50,7 +59,9 @@ Host: localhost:7070
 ```
 
 **Response (503 Service Unavailable)** — Beads not initialized
+
 ```json
+
 {
   "status": "error",
   "beads_initialized": false,
@@ -66,7 +77,9 @@ Host: localhost:7070
 List all issues. Supports optional query filters.
 
 **Request**
+
 ```http
+
 GET /api/v1/issues?status=pending&parent=gvi-0 HTTP/1.1
 Host: localhost:7070
 ```
@@ -82,7 +95,9 @@ Host: localhost:7070
 | `offset` | integer | No | Pagination offset (default: 0) |
 
 **Response (200 OK)**
+
 ```json
+
 {
   "issues": [
     {
@@ -118,18 +133,22 @@ Host: localhost:7070
 
 ---
 
-### GET /issues/:id
+### GET /issues/{id}
 
 Get single issue with full details including children and dependency information.
 
 **Request**
+
 ```http
+
 GET /api/v1/issues/gvi-2 HTTP/1.1
 Host: localhost:7070
 ```
 
 **Response (200 OK)**
+
 ```json
+
 {
   "id": "gvi-2",
   "title": "Beads adapter via bd CLI",
@@ -168,7 +187,9 @@ Host: localhost:7070
 ```
 
 **Response (404 Not Found)**
+
 ```json
+
 {
   "error": "issue not found",
   "code": "ISSUE_NOT_FOUND",
@@ -183,13 +204,17 @@ Host: localhost:7070
 Board view with issues grouped by status columns.
 
 **Request**
+
 ```http
+
 GET /api/v1/board HTTP/1.1
 Host: localhost:7070
 ```
 
 **Response (200 OK)**
+
 ```json
+
 {
   "columns": [
     {
@@ -261,7 +286,9 @@ Host: localhost:7070
 Dependency graph as nodes and edges. Supports multiple output formats.
 
 **Request**
+
 ```http
+
 GET /api/v1/graph?format=json HTTP/1.1
 Host: localhost:7070
 ```
@@ -274,7 +301,9 @@ Host: localhost:7070
 | `root` | string | No | Filter to subgraph rooted at issue ID |
 
 **Response (200 OK) — JSON format**
+
 ```json
+
 {
   "nodes": [
     {
@@ -317,7 +346,9 @@ Host: localhost:7070
 ```
 
 **Response (200 OK) — DOT format** (`?format=dot`)
+
 ```
+
 Content-Type: text/plain
 
 digraph dependencies {
@@ -340,7 +371,9 @@ digraph dependencies {
 Server-Sent Events stream for real-time updates. Connection stays open.
 
 **Request**
+
 ```http
+
 GET /api/v1/events HTTP/1.1
 Host: localhost:7070
 Accept: text/event-stream
@@ -348,7 +381,9 @@ Cache-Control: no-cache
 ```
 
 **Response Headers**
+
 ```http
+
 HTTP/1.1 200 OK
 Content-Type: text/event-stream
 Cache-Control: no-cache
@@ -365,7 +400,9 @@ Connection: keep-alive
 | `heartbeat` | Keep-alive (every 30s) |
 
 **Event Format**
+
 ```
+
 event: issue_updated
 data: {"id":"gvi-2","status":"done","previous_status":"in_progress","updated_at":"2026-01-01T14:30:00Z"}
 
@@ -384,7 +421,9 @@ Clients should reconnect on connection drop. No `Last-Event-ID` support in MVP.
 ## Data Types
 
 ### Issue (Summary)
+
 ```typescript
+
 interface IssueSummary {
   id: string;
   title: string;
@@ -394,7 +433,9 @@ interface IssueSummary {
 ```
 
 ### Issue (Full)
+
 ```typescript
+
 interface Issue {
   id: string;
   title: string;
@@ -412,7 +453,9 @@ interface Issue {
 ```
 
 ### Board
+
 ```typescript
+
 interface Board {
   columns: Column[];
   total: number;
@@ -427,7 +470,9 @@ interface Column {
 ```
 
 ### Graph
+
 ```typescript
+
 interface Graph {
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -461,7 +506,9 @@ interface GraphStats {
 All endpoints return consistent error format on failure.
 
 ### Error Schema
+
 ```json
+
 {
   "error": "human-readable message",
   "code": "MACHINE_READABLE_CODE",
@@ -481,7 +528,9 @@ All endpoints return consistent error format on failure.
 | `INVALID_PARAM` | 400 | Invalid query parameter |
 
 ### Example Error Response
+
 ```json
+
 {
   "error": "Beads not initialized. Run 'bd init' in your project directory.",
   "code": "BEADS_NOT_INIT",
@@ -511,28 +560,38 @@ Breaking changes will increment version: `/api/v2/*`
 ## Example Workflow
 
 ### 1. Check Health
+
 ```bash
+
 curl http://localhost:7070/api/v1/health
 ```
 
 ### 2. Get Board View
+
 ```bash
+
 curl http://localhost:7070/api/v1/board | jq '.columns[] | {status, count}'
 ```
 
 ### 3. View Issue Details
+
 ```bash
+
 curl http://localhost:7070/api/v1/issues/gvi-3 | jq
 ```
 
 ### 4. Export Dependency Graph
+
 ```bash
+
 curl http://localhost:7070/api/v1/graph?format=dot > deps.dot
 dot -Tpng deps.dot -o deps.png
 ```
 
 ### 5. Stream Events
+
 ```bash
+
 curl -N http://localhost:7070/api/v1/events
 ```
 
