@@ -304,3 +304,141 @@ func TestSearchMemories_EmptyQueryListsAll(t *testing.T) {
 		t.Errorf("Count: got %d, want 2", resp.Count)
 	}
 }
+
+// TestDoltSyncState_GreenServerAllRemotesOk is the happy-path canary for the
+// header sync pill: dolt server running + every remote reports "ok" →
+// health=green. JSON shapes captured from real bd 1.0.4 output 2026-05-24.
+func TestDoltSyncState_GreenServerAllRemotesOk(t *testing.T) {
+	mock := NewMockExecutor()
+	mock.SetResponse("dolt status --json", []byte(`{"running": true, "port": 45435, "schema_version": 1}`))
+	mock.SetResponse("dolt remote list --json",
+		[]byte(`[{"name":"origin","status":"ok"},{"name":"backup","status":"ok"}]`))
+	adapter := NewCLIAdapterWithExecutor("", mock)
+
+	state, err := adapter.DoltSyncState(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state.Health != model.DoltHealthGreen {
+		t.Errorf("Health: got %q, want green", state.Health)
+	}
+	if !state.Running {
+		t.Error("Running: expected true")
+	}
+	if len(state.Remotes) != 2 {
+		t.Errorf("Remotes: expected 2, got %d", len(state.Remotes))
+	}
+}
+
+func TestDoltSyncState_YellowOnDegradedRemote(t *testing.T) {
+	mock := NewMockExecutor()
+	mock.SetResponse("dolt status --json", []byte(`{"running": true, "port": 45435}`))
+	mock.SetResponse("dolt remote list --json",
+		[]byte(`[{"name":"origin","status":"auth_failed"}]`))
+	adapter := NewCLIAdapterWithExecutor("", mock)
+
+	state, err := adapter.DoltSyncState(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state.Health != model.DoltHealthYellow {
+		t.Errorf("Health: got %q, want yellow", state.Health)
+	}
+}
+
+func TestDoltSyncState_RedOnServerDown(t *testing.T) {
+	mock := NewMockExecutor()
+	mock.SetResponse("dolt status --json", []byte(`{"running": false}`))
+	mock.SetResponse("dolt remote list --json", []byte(`[]`))
+	adapter := NewCLIAdapterWithExecutor("", mock)
+
+	state, err := adapter.DoltSyncState(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state.Health != model.DoltHealthRed {
+		t.Errorf("Health: got %q, want red", state.Health)
+	}
+}
+
+func TestDoltSyncState_UnknownOnBDMissing(t *testing.T) {
+	mock := NewMockExecutor()
+	mock.SetError("dolt status --json", &BDNotFoundError{})
+	adapter := NewCLIAdapterWithExecutor("", mock)
+
+	state, err := adapter.DoltSyncState(context.Background())
+	if err != nil {
+		t.Fatalf("DoltSyncState should not propagate BDNotFound, got: %v", err)
+	}
+	if state.Health != model.DoltHealthUnknown {
+		t.Errorf("Health: got %q, want unknown", state.Health)
+	}
+	if state.Error == "" {
+		t.Error("Error: expected non-empty string carrying the underlying bd error")
+	}
+}
+
+func TestDoltSyncState_RemoteListFailureDegradesGracefully(t *testing.T) {
+	mock := NewMockExecutor()
+	mock.SetResponse("dolt status --json", []byte(`{"running": true}`))
+	mock.SetError("dolt remote list --json", &ExecutionError{Command: "dolt remote list", Stderr: "boom"})
+	adapter := NewCLIAdapterWithExecutor("", mock)
+
+	state, err := adapter.DoltSyncState(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state.Health != model.DoltHealthGreen {
+		t.Errorf("Health: got %q, want green (server up, no remotes known)", state.Health)
+	}
+	if len(state.Remotes) != 0 {
+		t.Errorf("Remotes: expected empty on list-error, got %d", len(state.Remotes))
+	}
+}
+
+func TestHumanFlags_EmptyOnNullOutput(t *testing.T) {
+	mock := NewMockExecutor()
+	mock.SetResponse("human list --json", []byte(`null`))
+	adapter := NewCLIAdapterWithExecutor("", mock)
+
+	flags, err := adapter.HumanFlags(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if flags == nil {
+		t.Fatal("expected non-nil empty slice, got nil")
+	}
+	if len(flags) != 0 {
+		t.Errorf("expected empty slice, got %d issues", len(flags))
+	}
+}
+
+func TestHumanFlags_ParsesIssues(t *testing.T) {
+	mock := NewMockExecutor()
+	mock.SetResponse("human list --json", []byte(`[
+		{"id":"x-1","title":"needs human","status":"open","priority":1,"issue_type":"task",
+		 "created_at":"2026-05-24T00:00:00Z","updated_at":"2026-05-24T00:00:00Z"}
+	]`))
+	adapter := NewCLIAdapterWithExecutor("", mock)
+
+	flags, err := adapter.HumanFlags(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(flags) != 1 {
+		t.Fatalf("expected 1 flag, got %d", len(flags))
+	}
+	if flags[0].ID != "x-1" {
+		t.Errorf("ID: got %q, want x-1", flags[0].ID)
+	}
+	if flags[0].Status != model.StatusPending {
+		t.Errorf("Status: got %q, want pending (mapped from 'open')", flags[0].Status)
+	}
+}
+
+// (TestHumanFlags_EmptyOnEmptyOutput removed: the whitespace-only-output
+// defense was speculative — real bd 1.0.4 emits either "null" or a valid
+// JSON array, both of which json.Unmarshal handles natively. Per PR #13
+// Gemini review 2026-05-24, the manual null/whitespace check was
+// redundant against the stdlib + the empty-data fast path in
+// ParseIssueList. The simpler path is preferred.)

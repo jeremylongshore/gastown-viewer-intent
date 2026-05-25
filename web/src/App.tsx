@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import type { BoardResponse, Issue, Column, IssueSummary, Town, TownStatus, Agent, Rig, Molecule, Convoy, Memory, MemoriesResponse } from './api';
-import { fetchBoard, fetchIssue, fetchTown, fetchTownStatus, fetchMolecules, fetchConvoys, fetchMemories, fetchMemory, searchMemories } from './api';
+import type { BoardResponse, Issue, Column, IssueSummary, Town, TownStatus, Agent, Rig, Molecule, Convoy, Memory, MemoriesResponse, DoltSyncState, DoltHealth, HumanFlagsResponse } from './api';
+import { fetchBoard, fetchIssue, fetchTown, fetchTownStatus, fetchMolecules, fetchConvoys, fetchMemories, fetchMemory, searchMemories, fetchSync, fetchHumanFlags } from './api';
 import DependencyGraph from './components/DependencyGraph';
 import './App.css';
 
-type ViewMode = 'beads' | 'graph' | 'gastown' | 'memories';
+type ViewMode = 'beads' | 'graph' | 'gastown' | 'memories' | 'triage';
 
 // MemoryScreenShareBanner is the persistent warning required by
 // 005-PP-POLICY-memories-classification § 4. Renders for the lifetime
@@ -180,6 +180,165 @@ function MemoryPanel({
               onReveal={() => onRevealKey(m.key)}
             />
           ))}
+      </div>
+    </div>
+  );
+}
+
+// SyncPill renders the dolt sync state in the header (council Q0 Surface 2).
+// Color binds to the server-derived health field; the UI does not compute
+// the color itself so that the server stays the source of truth and the
+// rule does not drift between front-end and back-end.
+function SyncPill({ state }: { state: DoltSyncState | null }) {
+  // Loading / not-yet-fetched: render a neutral gray pill so the header
+  // doesn't visually claim something it doesn't know yet.
+  if (!state) {
+    return (
+      <span
+        className="sync-pill"
+        title="Sync state loading…"
+        style={pillStyle('unknown')}
+      >
+        Sync ○
+      </span>
+    );
+  }
+  const labels: Record<DoltHealth, string> = {
+    green: 'Synced',
+    yellow: 'Push pending',
+    red: 'Server down',
+    unknown: 'Sync ?',
+  };
+  const remoteSummary = state.remotes.length === 0
+    ? 'no remotes'
+    : `${state.remotes.length} remote${state.remotes.length === 1 ? '' : 's'}`;
+  const tooltip = state.error
+    ? `Sync state unknown — ${state.error}`
+    : `${labels[state.health]} (${remoteSummary})`;
+  return (
+    <span
+      className="sync-pill"
+      title={tooltip}
+      style={pillStyle(state.health)}
+    >
+      ● {labels[state.health]}
+    </span>
+  );
+}
+
+// pillStyle maps a DoltHealth to the inline color tuple the SyncPill renders.
+// Kept inline (vs. .css) because the same colors are read by the JSX title
+// computation just above — co-locating reduces drift. The fallback to the
+// `unknown` palette handles the case where the server adds a new Health
+// value before the front-end ships matching colors (API drift defense).
+function pillStyle(health: DoltHealth): React.CSSProperties {
+  const palette: Record<DoltHealth, { bg: string; fg: string }> = {
+    green:   { bg: '#10b981', fg: '#ffffff' },
+    yellow:  { bg: '#f59e0b', fg: '#1f2937' },
+    red:     { bg: '#ef4444', fg: '#ffffff' },
+    unknown: { bg: '#6b7280', fg: '#ffffff' },
+  };
+  const p = palette[health] ?? palette.unknown;
+  return {
+    backgroundColor: p.bg,
+    color: p.fg,
+    padding: '4px 10px',
+    borderRadius: 999,
+    fontSize: 12,
+    fontWeight: 600,
+    marginLeft: 12,
+  };
+}
+
+// TriageBanner is the persistent screen-share warning required by
+// 005-PP-POLICY-memories-classification §4 rendering rules. The Triage
+// panel does not itself surface memory content (only issue titles flagged
+// by automation), but it lives in the same view-mode arc and the banner
+// reinforces the discipline before any future panel that does. Banner
+// stays for the lifetime of the view — engineer navigates away to
+// dismiss.
+function ScreenShareBanner() {
+  return (
+    <div
+      role="status"
+      style={{
+        backgroundColor: '#fef3c7',
+        color: '#78350f',
+        padding: '8px 16px',
+        borderBottom: '1px solid #f59e0b',
+        fontSize: 13,
+        fontWeight: 600,
+      }}
+    >
+      Triage queue may surface confidential issue titles — close before
+      screen-sharing or use the redaction toggle (when memories panel
+      ships in gastown-fp0).
+    </div>
+  );
+}
+
+// TriagePanel renders the read-only human-needed bead queue. Respond and
+// dismiss actions are intentionally absent — they require POST handlers
+// that ship in a later bead behind the auth token gate. The panel
+// surfaces the queue so the engineer knows to alt-tab to a terminal and
+// run `bd human respond <id>` / `bd human dismiss <id>` for now. That is
+// the CLI-passthrough pattern Council Q2 endorsed.
+function TriagePanel({
+  flags,
+  onIssueClick,
+}: {
+  flags: HumanFlagsResponse | null;
+  onIssueClick: (id: string) => void;
+}) {
+  if (!flags) {
+    return <div className="loading">Loading triage queue…</div>;
+  }
+  if (flags.count === 0) {
+    return (
+      <div className="triage-empty" style={{ padding: 24, color: '#6b7280' }}>
+        <h3 style={{ marginTop: 0 }}>Triage queue empty</h3>
+        <p>
+          No beads carry the <code>human</code> label right now. Anything an
+          AI agent or automation flags for human decision will appear here.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="triage">
+      <ScreenShareBanner />
+      <div style={{ padding: 16 }}>
+        <h2 style={{ marginTop: 0 }}>Triage ({flags.count})</h2>
+        <p style={{ color: '#6b7280', fontSize: 13 }}>
+          Read-only view — respond / dismiss actions require the auth-token
+          gate that ships in a later bead. For now: click an issue to view
+          details, then run <code>bd human respond &lt;id&gt;</code> or{' '}
+          <code>bd human dismiss &lt;id&gt;</code> in a terminal.
+        </p>
+        <ul style={{ padding: 0, listStyle: 'none' }}>
+          {flags.flags.map((issue) => (
+            <li
+              key={issue.id}
+              onClick={() => onIssueClick(issue.id)}
+              style={{
+                padding: '12px 16px',
+                marginBottom: 8,
+                backgroundColor: '#1f2937',
+                borderRadius: 6,
+                cursor: 'pointer',
+                color: '#f3f4f6',
+              }}
+            >
+              <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#9ca3af' }}>
+                {issue.id}
+              </div>
+              <div style={{ marginTop: 4, fontWeight: 600 }}>{issue.title}</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: '#9ca3af' }}>
+                {issue.priority} · {issue.status}
+              </div>
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
   );
@@ -681,6 +840,8 @@ function App() {
   const [memories, setMemories] = useState<MemoriesResponse | null>(null);
   const [memoryQuery, setMemoryQuery] = useState('');
   const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
+  const [sync, setSync] = useState<DoltSyncState | null>(null);
+  const [humanFlags, setHumanFlags] = useState<HumanFlagsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -716,18 +877,22 @@ function App() {
 
   async function loadData() {
     try {
-      const [boardData, townData, statusData, moleculesData, convoysData] = await Promise.all([
+      const [boardData, townData, statusData, moleculesData, convoysData, syncData, humanData] = await Promise.all([
         fetchBoard().catch(() => null),
         fetchTown().catch(() => null),
         fetchTownStatus().catch(() => null),
         fetchMolecules().catch(() => null),
         fetchConvoys().catch(() => null),
+        fetchSync().catch(() => null),
+        fetchHumanFlags().catch(() => null),
       ]);
       if (boardData) setBoard(boardData);
       setTown(townData);
       setTownStatus(statusData);
       setMolecules(moleculesData?.molecules || []);
       setConvoys(convoysData?.convoys || []);
+      setSync(syncData);
+      setHumanFlags(humanData);
       setError(null);
     } catch {
       setError('Failed to connect to daemon. Is gvid running on localhost:7070?');
@@ -789,7 +954,10 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>Gastown Viewer Intent</h1>
+        <h1>
+          Gastown Viewer Intent
+          <SyncPill state={sync} />
+        </h1>
         <div className="view-tabs">
           <button
             className={`tab ${viewMode === 'beads' ? 'active' : ''}`}
@@ -814,6 +982,12 @@ function App() {
             onClick={() => setViewMode('memories')}
           >
             Memories ({memories?.count ?? 0})
+          </button>
+          <button
+            className={`tab ${viewMode === 'triage' ? 'active' : ''}`}
+            onClick={() => setViewMode('triage')}
+          >
+            Triage ({humanFlags?.count ?? 0})
           </button>
         </div>
       </header>
@@ -850,6 +1024,10 @@ function App() {
           onSearch={setMemoryQuery}
           query={memoryQuery}
         />
+      )}
+
+      {viewMode === 'triage' && (
+        <TriagePanel flags={humanFlags} onIssueClick={handleIssueClick} />
       )}
 
       {selectedIssue && (

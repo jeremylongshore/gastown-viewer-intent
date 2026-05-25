@@ -347,3 +347,44 @@ export async function searchMemories(query: string, reveal = false): Promise<Mem
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
+
+// Dolt sync state — header pill (council Q0 Surface 2).
+// Health is the derived UI color; bind the pill to this field, not to
+// running/remotes directly. See internal/model/sync.go for the rule.
+
+export type DoltHealth = 'green' | 'yellow' | 'red' | 'unknown';
+
+export interface DoltRemote {
+  name: string;
+  status: string;
+}
+
+export interface DoltSyncState {
+  health: DoltHealth;
+  running: boolean;
+  port?: number;
+  schema_version?: number;
+  remotes: DoltRemote[];
+  error?: string;
+}
+
+export async function fetchSync(): Promise<DoltSyncState> {
+  const res = await fetch(`${API_BASE}/sync`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// Human triage — READ-VIEW only (council Q0 Surface 3). Respond/Dismiss
+// POSTs are intentionally absent; they ship in a later bead behind the
+// auth token gate from gastown-hu4.
+
+export interface HumanFlagsResponse {
+  flags: Issue[];
+  count: number;
+}
+
+export async function fetchHumanFlags(): Promise<HumanFlagsResponse> {
+  const res = await fetch(`${API_BASE}/human`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}

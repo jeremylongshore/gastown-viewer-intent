@@ -1,7 +1,10 @@
 package beads
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/intent-solutions-io/gastown-viewer-intent/internal/model"
 )
@@ -53,6 +56,8 @@ func TestMapStatus(t *testing.T) {
 		{"closed", model.StatusDone},
 		{"done", model.StatusDone},
 		{"blocked", model.StatusBlocked},
+		{"deferred", model.StatusDeferred},
+		{"DEFERRED", model.StatusDeferred}, // case-insensitive
 		{"unknown", model.StatusPending},
 	}
 
@@ -63,6 +68,85 @@ func TestMapStatus(t *testing.T) {
 				t.Errorf("mapStatus(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
+	}
+}
+
+// TestDeferredUntilPreserved is the regression test for the parser.go bug where
+// `bd defer <id> --until <when>` had its until-date silently dropped because
+// the "deferred" status fell through mapStatus's default branch and remapped to
+// "pending", and there was no DeferredUntil field on the model to carry the
+// date even if the status had been preserved. Council decision Q0 + Q3 binding
+// constraint (gastown-cr5 AT-DECR 2026-05-23). When this test fails, the
+// dashboard is lying to the user about what work is actually open versus what
+// is parked until a specific date.
+func TestDeferredUntilPreserved(t *testing.T) {
+	// Real bd 1.0.4 JSON shape captured 2026-05-23 from
+	// `bd show gastown-rj5 --json` after `bd defer gastown-rj5 --until tomorrow`.
+	input := []byte(`[
+		{
+			"id": "gastown-rj5",
+			"title": "Janitorial sweep",
+			"description": "",
+			"status": "deferred",
+			"priority": 2,
+			"issue_type": "task",
+			"created_at": "2026-05-24T04:07:03Z",
+			"updated_at": "2026-05-24T04:35:24Z",
+			"defer_until": "2026-05-25T04:35:24Z"
+		}
+	]`)
+	issues, err := ParseIssueList(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue, got %d", len(issues))
+	}
+
+	bd := issues[0]
+	if bd.Status != "deferred" {
+		t.Errorf("BDIssue.Status: expected %q, got %q", "deferred", bd.Status)
+	}
+	if bd.DeferUntil == nil {
+		t.Fatalf("BDIssue.DeferUntil: expected non-nil for deferred issue, got nil — this is the parser.go:112 regression")
+	}
+	wantTS, _ := time.Parse(time.RFC3339, "2026-05-25T04:35:24Z")
+	if !bd.DeferUntil.Equal(wantTS) {
+		t.Errorf("BDIssue.DeferUntil: expected %v, got %v", wantTS, *bd.DeferUntil)
+	}
+
+	m := bd.ToModelIssue()
+	if m.Status != model.StatusDeferred {
+		t.Errorf("model.Issue.Status: expected %q, got %q — deferred must NOT remap to pending",
+			model.StatusDeferred, m.Status)
+	}
+	if m.DeferredUntil == nil {
+		t.Fatalf("model.Issue.DeferredUntil: expected non-nil — the until-date is being dropped on the floor again")
+	}
+	if !m.DeferredUntil.Equal(wantTS) {
+		t.Errorf("model.Issue.DeferredUntil: expected %v, got %v", wantTS, *m.DeferredUntil)
+	}
+}
+
+// TestDeferredUntilOnlyAttachedWhenDeferred guards against a stale until-date
+// leaking into a non-deferred issue. When `bd update <id> --status open` is run
+// against a previously-deferred issue, bd may keep emitting the old defer_until
+// field in its JSON for a tick; the viewer must not present that as if the
+// issue were still parked.
+func TestDeferredUntilOnlyAttachedWhenDeferred(t *testing.T) {
+	staleTS := time.Date(2026, 5, 25, 4, 35, 24, 0, time.UTC)
+	bd := BDIssue{
+		ID:         "gastown-rj5",
+		Title:      "Janitorial sweep",
+		Status:     "open", // un-deferred but defer_until still emitted
+		DeferUntil: &staleTS,
+	}
+	m := bd.ToModelIssue()
+	if m.Status != model.StatusPending {
+		t.Errorf("expected status pending for un-deferred issue, got %q", m.Status)
+	}
+	if m.DeferredUntil != nil {
+		t.Errorf("DeferredUntil must not leak onto a non-deferred issue; got %v", *m.DeferredUntil)
 	}
 }
 
@@ -265,4 +349,94 @@ func TestParseMemories_NonStringValueSkipped(t *testing.T) {
 	if mems[0].Key != "k1" {
 		t.Errorf("survived memory key: got %q, want k1", mems[0].Key)
 	}
+}
+
+func TestParseDoltStatus(t *testing.T) {
+	// JSON shape captured from live bd 1.0.4 2026-05-24.
+	input := []byte(`{
+		"data_dir": "/home/jeremy/.beads/dolt",
+		"pid": 1247309,
+		"port": 45435,
+		"running": true,
+		"schema_version": 1
+	}`)
+	st, err := ParseDoltStatus(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !st.Running {
+		t.Error("Running: expected true")
+	}
+	if st.Port != 45435 {
+		t.Errorf("Port: got %d, want 45435", st.Port)
+	}
+	if st.SchemaVersion != 1 {
+		t.Errorf("SchemaVersion: got %d, want 1", st.SchemaVersion)
+	}
+	// Remotes is initialized non-nil so the JSON encoder emits [] not null.
+	if st.Remotes == nil {
+		t.Error("Remotes: expected non-nil empty slice")
+	}
+}
+
+func TestParseDoltStatus_NotRunning(t *testing.T) {
+	input := []byte(`{"running": false}`)
+	st, err := ParseDoltStatus(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if st.Running {
+		t.Error("Running: expected false")
+	}
+}
+
+func TestParseDoltStatus_Malformed(t *testing.T) {
+	if _, err := ParseDoltStatus([]byte(`not json`)); err == nil {
+		t.Error("expected error on malformed JSON")
+	}
+}
+
+func TestParseDoltRemotes(t *testing.T) {
+	input := []byte(`[
+		{"name": "origin", "sql_url": "https://example/sql", "cli_url": "https://example/cli", "status": "ok"},
+		{"name": "backup", "status": "auth_failed"}
+	]`)
+	got := ParseDoltRemotes(input)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 remotes, got %d", len(got))
+	}
+	if got[0].Name != "origin" || got[0].Status != "ok" {
+		t.Errorf("remote[0]: %+v", got[0])
+	}
+	if got[1].Name != "backup" || got[1].Status != "auth_failed" {
+		t.Errorf("remote[1]: %+v", got[1])
+	}
+	// Sanity: URL fields are stripped — they leak the workspace name into
+	// screen-recordings, so the wire response should never carry them.
+	gotJSON, _ := json.Marshal(got)
+	for _, banned := range []string{"sql_url", "cli_url", "https://"} {
+		if bytesContains(gotJSON, banned) {
+			t.Errorf("remote JSON should not include %q, got %s", banned, gotJSON)
+		}
+	}
+}
+
+func TestParseDoltRemotes_Null(t *testing.T) {
+	// bd emits the literal "null" when no remotes are configured. Must
+	// degrade to empty slice rather than nil-deref or returning null.
+	got := ParseDoltRemotes([]byte(`null`))
+	if got == nil || len(got) != 0 {
+		t.Errorf("expected non-nil empty slice for null input, got %v", got)
+	}
+}
+
+func TestParseDoltRemotes_Malformed(t *testing.T) {
+	got := ParseDoltRemotes([]byte(`not json`))
+	if got == nil || len(got) != 0 {
+		t.Errorf("expected non-nil empty slice on malformed JSON, got %v", got)
+	}
+}
+
+func bytesContains(haystack []byte, needle string) bool {
+	return strings.Contains(string(haystack), needle)
 }

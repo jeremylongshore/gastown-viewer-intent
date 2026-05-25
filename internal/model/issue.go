@@ -11,6 +11,10 @@ const (
 	StatusInProgress Status = "in_progress"
 	StatusDone       Status = "done"
 	StatusBlocked    Status = "blocked"
+	// StatusDeferred is the time-windowed postpone state from `bd defer --until`.
+	// Previously this mapped lossily to StatusPending, which dropped the until-date
+	// on the floor — see Issue.DeferredUntil for the preserved timestamp.
+	StatusDeferred Status = "deferred"
 )
 
 // Priority represents issue priority level.
@@ -44,6 +48,9 @@ type Issue struct {
 	DoneWhen    []string       `json:"done_when,omitempty"`
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`
+	// DeferredUntil is the wake-up timestamp when Status == StatusDeferred.
+	// Nil for any other status. Populated from bd's `defer_until` field.
+	DeferredUntil *time.Time `json:"deferred_until,omitempty"`
 }
 
 // IssueListResponse is the response for GET /api/v1/issues.

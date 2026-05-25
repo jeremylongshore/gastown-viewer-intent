@@ -11,22 +11,27 @@ import (
 
 // BDIssue represents an issue as returned by bd --json.
 type BDIssue struct {
-	ID              string        `json:"id"`
-	Title           string        `json:"title"`
-	Description     string        `json:"description"`
-	Status          string        `json:"status"`
-	Priority        int           `json:"priority"`
-	IssueType       string        `json:"issue_type"`
-	CreatedAt       time.Time     `json:"created_at"`
-	UpdatedAt       time.Time     `json:"updated_at"`
-	ClosedAt        *time.Time    `json:"closed_at,omitempty"`
-	DependencyCount int           `json:"dependency_count,omitempty"`
-	DependentCount  int           `json:"dependent_count,omitempty"`
-	Dependencies    []BDIssue     `json:"dependencies,omitempty"`
-	Dependents      []BDIssue     `json:"dependents,omitempty"`
-	BlockedBy       []string      `json:"blocked_by,omitempty"`
-	BlockedByCount  int           `json:"blocked_by_count,omitempty"`
-	DepType         string        `json:"dependency_type,omitempty"`
+	ID          string     `json:"id"`
+	Title       string     `json:"title"`
+	Description string     `json:"description"`
+	Status      string     `json:"status"`
+	Priority    int        `json:"priority"`
+	IssueType   string     `json:"issue_type"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	ClosedAt    *time.Time `json:"closed_at,omitempty"`
+	// DeferUntil is the wake-up timestamp set by `bd defer --until`. Only present
+	// when Status == "deferred"; absent (nil) for any other status. Pre-1.0 versions
+	// of the viewer dropped this field on the floor and remapped deferred → pending,
+	// losing the until-date — fixed in gastown-7fq.
+	DeferUntil      *time.Time `json:"defer_until,omitempty"`
+	DependencyCount int        `json:"dependency_count,omitempty"`
+	DependentCount  int        `json:"dependent_count,omitempty"`
+	Dependencies    []BDIssue  `json:"dependencies,omitempty"`
+	Dependents      []BDIssue  `json:"dependents,omitempty"`
+	BlockedBy       []string   `json:"blocked_by,omitempty"`
+	BlockedByCount  int        `json:"blocked_by_count,omitempty"`
+	DepType         string     `json:"dependency_type,omitempty"`
 }
 
 // ToModelIssue converts a BDIssue to the domain model Issue.
@@ -46,6 +51,15 @@ func (bi *BDIssue) ToModelIssue() model.Issue {
 
 	// Parse "Done when:" from description
 	issue.DoneWhen = parseDoneWhen(bi.Description)
+
+	// Preserve the defer-until timestamp when the issue is in the deferred state.
+	// We only attach DeferredUntil when the status is actually deferred so older
+	// updates (when the until-date was set then later cleared by un-deferring)
+	// do not leak a stale timestamp into a now-pending issue.
+	if issue.Status == model.StatusDeferred && bi.DeferUntil != nil {
+		t := *bi.DeferUntil
+		issue.DeferredUntil = &t
+	}
 
 	// Map dependencies to BlockedBy (things this issue depends on)
 	for _, dep := range bi.Dependencies {
@@ -109,6 +123,8 @@ func mapStatus(s string) model.Status {
 		return model.StatusDone
 	case "blocked":
 		return model.StatusBlocked
+	case "deferred":
+		return model.StatusDeferred
 	default:
 		return model.StatusPending
 	}
@@ -261,4 +277,74 @@ func ParseMemories(data []byte) (memories []model.Memory, schemaVersion int, err
 // unstable (content can change in place via `bd remember --key`).
 func sortMemoriesByKey(m []model.Memory) {
 	sort.Slice(m, func(i, j int) bool { return m[i].Key < m[j].Key })
+}
+
+// rawDoltStatus mirrors the JSON shape returned by `bd dolt status --json`.
+// Field set captured from live bd 1.0.4 output 2026-05-24.
+//
+// The Error field captures the alternate shape bd emits in a non-beads dir:
+// `{"error": "no active beads workspace found", "hint": "...", "schema_version": 1}`.
+// Presence of a non-empty Error means the rest of the fields are unreliable
+// and the adapter should report Health=unknown.
+type rawDoltStatus struct {
+	DataDir       string `json:"data_dir,omitempty"`
+	PID           int    `json:"pid,omitempty"`
+	Port          int    `json:"port,omitempty"`
+	Running       bool   `json:"running"`
+	SchemaVersion int    `json:"schema_version,omitempty"`
+	Error         string `json:"error,omitempty"`
+}
+
+// rawDoltRemote mirrors one element of `bd dolt remote list --json`.
+type rawDoltRemote struct {
+	Name   string `json:"name"`
+	SQLURL string `json:"sql_url,omitempty"`
+	CLIURL string `json:"cli_url,omitempty"`
+	Status string `json:"status,omitempty"`
+}
+
+// ParseDoltStatus turns `bd dolt status --json` output into a partially
+// filled DoltSyncState. The Health field is NOT computed here — that's the
+// adapter's job because health composes status + remote-list, and the
+// parser must stay orthogonal to that composition.
+//
+// If bd emitted the error-JSON shape (top-level "error" field), the
+// returned state carries that string in Error and the adapter will map
+// it to Health=unknown.
+func ParseDoltStatus(data []byte) (*model.DoltSyncState, error) {
+	var raw rawDoltStatus
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	return &model.DoltSyncState{
+		Running:       raw.Running,
+		Port:          raw.Port,
+		SchemaVersion: raw.SchemaVersion,
+		Error:         raw.Error,
+		Remotes:       []model.DoltRemote{}, // adapter fills this
+	}, nil
+}
+
+// ParseDoltRemotes turns `bd dolt remote list --json` output into the
+// minimal []model.DoltRemote the wire response surfaces. Full URLs are
+// intentionally NOT carried into the model — they would leak the user's
+// DoltHub workspace path into any screen-recording that captures the
+// dashboard. Malformed input returns an empty slice rather than an error
+// so the caller's health-derivation path still functions on a green
+// server with unparseable remote output.
+//
+// `json.Unmarshal` handles the literal `null` and empty input by leaving
+// the target slice nil; the `make([]model.DoltRemote, 0, len(raws))` +
+// empty range loop below guarantees a non-nil empty slice in all the
+// not-an-array cases, so no manual null/empty check is needed.
+func ParseDoltRemotes(data []byte) []model.DoltRemote {
+	var raws []rawDoltRemote
+	if err := json.Unmarshal(data, &raws); err != nil {
+		return []model.DoltRemote{}
+	}
+	out := make([]model.DoltRemote, 0, len(raws))
+	for _, r := range raws {
+		out = append(out, model.DoltRemote{Name: r.Name, Status: r.Status})
+	}
+	return out
 }

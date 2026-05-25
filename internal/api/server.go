@@ -19,6 +19,18 @@ type Config struct {
 	CORSOrigins []string
 	Version     string
 	TownRoot    string // Gas Town workspace root (default: ~/gt)
+
+	// SessionTokenPath is the filesystem location where the generated
+	// per-process session token will be persisted at startup. Empty means
+	// "use DefaultSessionTokenPath() (~/.config/gvid/token)". The token file
+	// is always written with mode 0600.
+	SessionTokenPath string
+
+	// DisableLoopbackCheck bypasses the startup-time loopback bind check.
+	// Off-by-default; enabling this allows binding to 0.0.0.0 / non-loopback
+	// addresses. Intended ONLY for ephemeral container test environments;
+	// hard-flagged as unsafe in the log line at startup.
+	DisableLoopbackCheck bool
 }
 
 // DefaultConfig returns configuration with sensible defaults.
@@ -39,6 +51,11 @@ type Server struct {
 	gtAdapter gastown.Adapter
 	mux       *http.ServeMux
 	sse       *SSEBroker
+
+	// sessionToken is the per-process bearer token required by
+	// RequireTokenMiddleware on state-mutating endpoints. Generated at Start()
+	// time, persisted to config.SessionTokenPath, and never logged in plaintext.
+	sessionToken *SessionToken
 }
 
 // NewServer creates a new API server.
@@ -101,20 +118,75 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/memories/search", s.handleMemoriesSearch)
 	s.mux.HandleFunc("GET /api/v1/memories/{key}", s.handleMemory)
 
+	// Beads - Dolt sync state (header pill) — read-only per AT-DECR Q0
+	s.mux.HandleFunc("GET /api/v1/sync", s.handleSync)
+
+	// Beads - Human triage queue — READ-VIEW per AT-DECR Q0; no POST handlers
+	// in this burst (deferred behind the auth token gate from gastown-hu4).
+	s.mux.HandleFunc("GET /api/v1/human", s.handleHumanFlags)
+
 	// Static files — catch-all after API routes
 	s.serveStaticFiles()
 }
 
-// Handler returns the HTTP handler with middleware applied.
+// Handler returns the HTTP handler with middleware applied. The order is
+// outside-in: incoming requests hit OriginAllowlist first (cheap, fast reject
+// of cross-origin browser attacks), then CORS for response headers, then the
+// logging middleware, then the mux. RequireTokenMiddleware is intentionally
+// NOT applied at this layer — it is wrapped per-route on state-mutating
+// endpoints when they ship, so read-only endpoints (the entire surface this
+// burst) remain accessible to native clients without a token.
 func (s *Server) Handler() http.Handler {
-	return s.corsMiddleware(s.loggingMiddleware(s.mux))
+	originAllowlist := OriginAllowlistMiddleware(s.config.CORSOrigins)
+	return originAllowlist(s.corsMiddleware(s.loggingMiddleware(s.mux)))
 }
 
 // Start starts the HTTP server.
+//
+// Two pre-flight checks before binding:
+//
+//  1. Loopback bind enforcement: the daemon refuses to bind a non-loopback
+//     host unless Config.DisableLoopbackCheck is explicitly set. This
+//     prevents the most common deployment surprise — a default-bind on
+//     0.0.0.0 exposing the dashboard to any network the dev box is on.
+//  2. Session token generation: a fresh 256-bit token is generated and
+//     persisted to Config.SessionTokenPath (default ~/.config/gvid/token,
+//     mode 0600). The token's existence is reported via the daemon log but
+//     never the value itself.
 func (s *Server) Start() error {
+	if !s.config.DisableLoopbackCheck && !IsLoopbackHost(s.config.Host) {
+		return fmt.Errorf("refusing to bind non-loopback host %q; pass --host=localhost "+
+			"(or set Config.DisableLoopbackCheck for ephemeral containers ONLY)",
+			s.config.Host)
+	}
+	if s.config.DisableLoopbackCheck {
+		log.Printf("WARNING: loopback bind check is DISABLED; binding %s on a "+
+			"non-loopback address exposes the dashboard to the network",
+			s.config.Host)
+	}
+
+	tokenPath := s.config.SessionTokenPath
+	if tokenPath == "" {
+		var err error
+		tokenPath, err = DefaultSessionTokenPath()
+		if err != nil {
+			return fmt.Errorf("resolve session token path: %w", err)
+		}
+	}
+	tok, err := GenerateSessionToken()
+	if err != nil {
+		return fmt.Errorf("generate session token: %w", err)
+	}
+	resolvedPath, err := tok.Persist(tokenPath)
+	if err != nil {
+		return fmt.Errorf("persist session token to %s: %w", tokenPath, err)
+	}
+	s.sessionToken = tok
+
 	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
 	log.Printf("Starting Gastown Viewer Intent daemon on %s", addr)
 	log.Printf("API: http://%s/api/v1/", addr)
+	log.Printf("Session token: %s (mode 0600; required by future state-changing endpoints)", resolvedPath)
 
 	// Start SSE broker
 	go s.sse.Start()
@@ -129,6 +201,11 @@ func (s *Server) Start() error {
 
 	return server.ListenAndServe()
 }
+
+// SessionToken returns the in-process token (or nil if Start() has not yet
+// run). Test helpers use this; production code paths should reach for the
+// token via RequireTokenMiddleware only.
+func (s *Server) SessionToken() *SessionToken { return s.sessionToken }
 
 // corsMiddleware adds CORS headers for development.
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
