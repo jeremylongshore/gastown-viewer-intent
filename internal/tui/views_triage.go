@@ -47,14 +47,11 @@ func (m Model) viewTriage() string {
 			sStyle = statusBlocked
 		}
 
-		title := f.Title
 		maxLen := m.width - 30
 		if maxLen < 20 {
 			maxLen = 20
 		}
-		if len(title) > maxLen {
-			title = title[:maxLen-3] + "..."
-		}
+		title := truncateRunes(f.Title, maxLen)
 
 		b.WriteString(fmt.Sprintf("%s %s  %s  %s  %s\n",
 			marker,

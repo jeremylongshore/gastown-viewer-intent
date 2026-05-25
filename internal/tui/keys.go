@@ -147,9 +147,14 @@ func (r *KeyRegistry) All() []KeyBindingDoc {
 // a matched bool reporting whether any handler fired. If matched is
 // false the caller's Update should fall through to its own switch
 // (currently no other paths exist; preserved for future composition).
+//
+// The lock is released BEFORE the handler runs so a handler that
+// re-enters the registry (e.g. a future binding that programmatically
+// invokes another) does not deadlock against the RWMutex. This mirrors
+// DispatchCombo's release-before-invoke order.
 func (r *KeyRegistry) Dispatch(m Model, focus Focus, k string) (Model, tea.Cmd, bool) {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
+	var handler func(Model) (Model, tea.Cmd)
 	for _, b := range r.bindings {
 		if b.Handler == nil {
 			continue
@@ -159,12 +164,21 @@ func (r *KeyRegistry) Dispatch(m Model, focus Focus, k string) (Model, tea.Cmd, 
 		}
 		for _, kk := range b.Keys {
 			if kk == k {
-				newModel, cmd := b.Handler(m)
-				return newModel, cmd, true
+				handler = b.Handler
+				break
 			}
 		}
+		if handler != nil {
+			break
+		}
 	}
-	return m, nil, false
+	r.mu.RUnlock()
+
+	if handler == nil {
+		return m, nil, false
+	}
+	newModel, cmd := handler(m)
+	return newModel, cmd, true
 }
 
 // DispatchCombo handles the second-and-subsequent keys of a combo. If

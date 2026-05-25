@@ -51,11 +51,8 @@ func (m Model) viewMemories() string {
 		if i == m.memCur && m.memDetailOpen {
 			b.WriteString(m.viewMemoryDetail(mem.Key, mem.Content, mem.Redacted, mem.RedactionMarkers))
 		} else if i == m.memCur && !m.memDetailOpen {
-			preview := mem.Content
-			if len(preview) > 80 {
-				preview = preview[:77] + "..."
-			}
-			preview = strings.ReplaceAll(preview, "\n", " ")
+			preview := strings.ReplaceAll(mem.Content, "\n", " ")
+			preview = truncateRunes(preview, 80)
 			b.WriteString(labelStyle.Render("    "+preview) + "\n")
 		}
 	}
@@ -90,6 +87,25 @@ func (m Model) viewMemoryDetail(key, content string, redacted bool, markers []st
 	b.WriteString(hintStyle.Render(
 		fmt.Sprintf("    to reveal full content: bd recall %s", key)) + "\n")
 	return b.String()
+}
+
+// truncateRunes returns s shortened to at most n runes, suffixed with
+// "..." when truncation actually occurred. Works on the rune count so
+// multi-byte UTF-8 (Cyrillic, CJK, emoji in memory content) is never
+// sliced mid-codepoint. n is the visible width budget INCLUDING the
+// ellipsis — callers pass the final desired width.
+func truncateRunes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	if n <= 3 {
+		return string(runes[:n])
+	}
+	return string(runes[:n-3]) + "..."
 }
 
 // wrap is a tiny word-wrap helper. We avoid pulling in a wrapper

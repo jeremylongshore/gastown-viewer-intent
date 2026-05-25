@@ -110,6 +110,25 @@ func (c *Client) Issue(id string) (*model.Issue, error) {
 	return &issue, nil
 }
 
+// decodeJSON is the shared response handler for the new memory/triage
+// endpoints. It enforces 200 OK before attempting to JSON-decode, so a
+// daemon error (BD_NOT_FOUND, BEADS_NOT_INIT, etc.) surfaces as a
+// readable status line instead of a confusing JSON-unmarshal error
+// against an error envelope.
+func decodeJSON(resp *http.Response, out any) error {
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		// Best-effort: include the response body if it's short enough
+		// to be useful (the daemon's error envelope is ~80 bytes).
+		if len(body) > 0 && len(body) < 512 {
+			return fmt.Errorf("daemon returned %s: %s", resp.Status, string(body))
+		}
+		return fmt.Errorf("daemon returned %s", resp.Status)
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
 // Memories fetches the full memory list from the daemon. The daemon
 // applies the 005-PP-POLICY redaction layer before serialization, so
 // the TUI always renders pre-redacted content — there is no reveal
@@ -120,13 +139,8 @@ func (c *Client) Memories() (*model.MemoriesResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connection failed: %w", err)
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
 	var out model.MemoriesResponse
-	if err := json.Unmarshal(body, &out); err != nil {
+	if err := decodeJSON(resp, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -143,13 +157,8 @@ func (c *Client) SearchMemories(q string) (*model.MemoriesResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connection failed: %w", err)
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
 	var out model.MemoriesResponse
-	if err := json.Unmarshal(body, &out); err != nil {
+	if err := decodeJSON(resp, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -162,13 +171,8 @@ func (c *Client) HumanFlags() (*model.HumanFlagsResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connection failed: %w", err)
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
 	var out model.HumanFlagsResponse
-	if err := json.Unmarshal(body, &out); err != nil {
+	if err := decodeJSON(resp, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

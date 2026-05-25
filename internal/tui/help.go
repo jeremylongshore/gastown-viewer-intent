@@ -17,8 +17,10 @@ func (m Model) viewHelp() string {
 	docs := m.registry.All()
 
 	// Filter: include Global bindings + bindings scoped to current
-	// focus. Detail focus also inherits Board bindings the way the user
-	// expects (they are still on the Board contextually).
+	// focus. Each focus is shown in isolation — Detail has its own
+	// minimal set (esc/back) and intentionally does NOT inherit Board
+	// navigation, so a user reading an issue isn't tempted to move the
+	// kanban cursor while in the detail screen.
 	relevant := make([]KeyBindingDoc, 0, len(docs))
 	for _, d := range docs {
 		if d.Global {

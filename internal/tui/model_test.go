@@ -208,6 +208,35 @@ func TestDispatch_TriageNavigation(t *testing.T) {
 	}
 }
 
+// TestTruncateRunes_UTF8Safe locks in the multi-byte safety fix from
+// Gemini review round 1 — the original implementation byte-sliced and
+// could split a multi-byte codepoint, producing malformed UTF-8 in the
+// rendered output.
+func TestTruncateRunes_UTF8Safe(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		n    int
+		want string
+	}{
+		{"ascii under limit", "hello", 10, "hello"},
+		{"ascii at limit", "hello", 5, "hello"},
+		{"ascii truncated", "hello world", 8, "hello..."},
+		{"cyrillic does not split codepoint", "привет мир", 6, "при..."},
+		{"emoji does not split codepoint", "🚀🚀🚀🚀🚀", 4, "🚀..."},
+		{"n <= 3 returns prefix without ellipsis", "hello", 2, "he"},
+		{"n zero returns empty", "hello", 0, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := truncateRunes(tc.in, tc.n)
+			if got != tc.want {
+				t.Errorf("truncateRunes(%q, %d) = %q, want %q", tc.in, tc.n, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestComboTimeoutCmd_FiresInRoughBounds is a sanity check that the
 // tea.Tick wrapper produces a message within ~2x the timeout. We do
 // NOT call the cmd directly inside Update; the bubbletea program does

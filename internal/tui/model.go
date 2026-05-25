@@ -440,11 +440,7 @@ func (m Model) viewBoard() string {
 			if i == m.cursor && j == m.issueCur {
 				style = selectedIssueStyle
 			}
-			title := issue.Title
-			if len(title) > 20 {
-				title = title[:17] + "..."
-			}
-			issues = append(issues, style.Render(title))
+			issues = append(issues, style.Render(truncateRunes(issue.Title, 20)))
 		}
 
 		content := header + "\n" + strings.Join(issues, "\n")
@@ -483,11 +479,7 @@ func (m Model) viewIssue() string {
 
 	if m.issue.Description != "" {
 		b.WriteString(labelStyle.Render("Description:\n"))
-		desc := m.issue.Description
-		if len(desc) > 500 {
-			desc = desc[:497] + "..."
-		}
-		b.WriteString(desc + "\n\n")
+		b.WriteString(truncateRunes(m.issue.Description, 500) + "\n\n")
 	}
 
 	if len(m.issue.DoneWhen) > 0 {
