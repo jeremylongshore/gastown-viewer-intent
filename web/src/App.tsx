@@ -1,10 +1,189 @@
 import { useEffect, useState } from 'react';
-import type { BoardResponse, Issue, Column, IssueSummary, Town, TownStatus, Agent, Rig, Molecule, Convoy, DoltSyncState, DoltHealth, HumanFlagsResponse } from './api';
-import { fetchBoard, fetchIssue, fetchTown, fetchTownStatus, fetchMolecules, fetchConvoys, fetchSync, fetchHumanFlags } from './api';
+import type { BoardResponse, Issue, Column, IssueSummary, Town, TownStatus, Agent, Rig, Molecule, Convoy, Memory, MemoriesResponse, DoltSyncState, DoltHealth, HumanFlagsResponse } from './api';
+import { fetchBoard, fetchIssue, fetchTown, fetchTownStatus, fetchMolecules, fetchConvoys, fetchMemories, fetchMemory, searchMemories, fetchSync, fetchHumanFlags } from './api';
 import DependencyGraph from './components/DependencyGraph';
 import './App.css';
 
-type ViewMode = 'beads' | 'graph' | 'gastown' | 'triage';
+type ViewMode = 'beads' | 'graph' | 'gastown' | 'memories' | 'triage';
+
+// MemoryScreenShareBanner is the persistent warning required by
+// 005-PP-POLICY-memories-classification § 4. Renders for the lifetime
+// of the Memories panel; engineer must navigate away to dismiss.
+function MemoryScreenShareBanner() {
+  return (
+    <div
+      role="status"
+      style={{
+        backgroundColor: '#fef3c7',
+        color: '#78350f',
+        padding: '8px 16px',
+        borderBottom: '1px solid #f59e0b',
+        fontSize: 13,
+        fontWeight: 600,
+      }}
+    >
+      MEMORIES — sensitive content. Partner names + token-like strings are
+      redacted by default. Close this panel before screen-sharing.
+    </div>
+  );
+}
+
+// MemoryCard renders a single memory with per-card reveal toggle. The
+// reveal does NOT persist: navigating away or refetching restores the
+// redacted state (005-PP-POLICY § 4 rule 2).
+function MemoryCard({
+  memory,
+  onReveal,
+  revealed,
+}: {
+  memory: Memory;
+  revealed: boolean;
+  onReveal: () => void;
+}) {
+  const markerLabel =
+    memory.redaction_markers && memory.redaction_markers.length > 0
+      ? memory.redaction_markers.join(', ')
+      : 'redacted';
+  return (
+    <div
+      style={{
+        padding: 12,
+        marginBottom: 8,
+        backgroundColor: '#1f2937',
+        borderRadius: 6,
+        color: '#f3f4f6',
+      }}
+    >
+      <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#9ca3af' }}>
+        {memory.key}
+      </div>
+      <pre
+        style={{
+          marginTop: 6,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          fontFamily: 'inherit',
+          fontSize: 13,
+          background: 'transparent',
+          padding: 0,
+        }}
+      >
+        {memory.content}
+      </pre>
+      <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+        {memory.redacted && !revealed && (
+          <button
+            onClick={onReveal}
+            title={`Reveal — contains ${markerLabel}. Reveal does NOT persist; refetch restores redaction.`}
+            style={{
+              fontSize: 12,
+              padding: '4px 10px',
+              borderRadius: 4,
+              backgroundColor: '#fbbf24',
+              color: '#1f2937',
+              border: 'none',
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            Reveal ({markerLabel})
+          </button>
+        )}
+        {revealed && (
+          <span style={{ fontSize: 11, color: '#fbbf24' }}>
+            ⚠ revealed (refresh to redact again)
+          </span>
+        )}
+        <button
+          onClick={() => navigator.clipboard.writeText(`bd recall ${memory.key}`)}
+          title="Copy `bd recall <key>` to clipboard"
+          style={{
+            fontSize: 12,
+            padding: '4px 10px',
+            borderRadius: 4,
+            backgroundColor: '#374151',
+            color: '#f3f4f6',
+            border: '1px solid #4b5563',
+            cursor: 'pointer',
+          }}
+        >
+          Copy `bd recall {memory.key}`
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// MemoryPanel is the read-only memories view (Council Q2 architectural
+// invariant). Search box uses the bd-memories search semantics; reveal
+// is per-card and does not persist across reloads.
+function MemoryPanel({
+  data,
+  onRevealKey,
+  revealedKeys,
+  onSearch,
+  query,
+}: {
+  data: MemoriesResponse | null;
+  revealedKeys: Set<string>;
+  onRevealKey: (key: string) => void;
+  onSearch: (q: string) => void;
+  query: string;
+}) {
+  return (
+    <div className="memories">
+      <MemoryScreenShareBanner />
+      <div style={{ padding: 16 }}>
+        <h2 style={{ marginTop: 0 }}>
+          Memories {data ? `(${data.count})` : ''}
+        </h2>
+        <p style={{ color: '#6b7280', fontSize: 13 }}>
+          Read-only mirror of <code>bd memories</code>. The bd CLI is the
+          canonical writer — use <code>bd remember &quot;…&quot;</code> in a
+          terminal to add or update. Per-card reveal is logged but does NOT
+          persist across reloads.
+        </p>
+        <input
+          type="search"
+          autoComplete="off"
+          placeholder="Search memory content…"
+          value={query}
+          onChange={(e) => onSearch(e.target.value)}
+          style={{
+            display: 'block',
+            width: '100%',
+            padding: 8,
+            marginBottom: 16,
+            fontSize: 14,
+            backgroundColor: '#1f2937',
+            color: '#f3f4f6',
+            border: '1px solid #4b5563',
+            borderRadius: 4,
+          }}
+        />
+        {!data && <div className="loading">Loading…</div>}
+        {data && data.count === 0 && (
+          <div style={{ color: '#6b7280' }}>
+            <p>No memories {query ? `match "${query}"` : 'stored yet'}.</p>
+            <p>
+              Add one in a terminal with{' '}
+              <code>bd remember &quot;your insight here&quot;</code>.
+            </p>
+          </div>
+        )}
+        {data &&
+          data.memories.map((m) => (
+            <MemoryCard
+              key={m.key}
+              memory={m}
+              revealed={revealedKeys.has(m.key)}
+              onReveal={() => onRevealKey(m.key)}
+            />
+          ))}
+      </div>
+    </div>
+  );
+}
 
 // SyncPill renders the dolt sync state in the header (council Q0 Surface 2).
 // Color binds to the server-derived health field; the UI does not compute
@@ -656,6 +835,11 @@ function App() {
   const [townStatus, setTownStatus] = useState<TownStatus | null>(null);
   const [molecules, setMolecules] = useState<Molecule[]>([]);
   const [convoys, setConvoys] = useState<Convoy[]>([]);
+  // Memory panel state. revealedKeys is intentionally NOT persisted — see
+  // 005-PP-POLICY-memories-classification § 4 rule 2.
+  const [memories, setMemories] = useState<MemoriesResponse | null>(null);
+  const [memoryQuery, setMemoryQuery] = useState('');
+  const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
   const [sync, setSync] = useState<DoltSyncState | null>(null);
   const [humanFlags, setHumanFlags] = useState<HumanFlagsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -666,6 +850,30 @@ function App() {
     const interval = setInterval(loadData, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  // Memories: fetch on query change. Cleared revealedKeys on every fetch
+  // so a reveal never persists across reloads (005-PP-POLICY § 4).
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const data = await (memoryQuery
+          ? searchMemories(memoryQuery)
+          : fetchMemories());
+        if (!cancelled) {
+          setMemories(data);
+          setRevealedKeys(new Set());
+        }
+      } catch {
+        if (!cancelled) setMemories({ memories: [], count: 0, schema_version: 0 });
+      }
+    };
+    const t = setTimeout(run, 200); // debounce typing
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [memoryQuery]);
 
   async function loadData() {
     try {
@@ -690,6 +898,27 @@ function App() {
       setError('Failed to connect to daemon. Is gvid running on localhost:7070?');
     } finally {
       setLoading(false);
+    }
+  }
+
+  // revealMemoryKey fetches the unredacted version of a single memory and
+  // patches it into the current list. Per 005-PP-POLICY § 4 rule 2, the
+  // reveal does NOT persist across navigations — `revealedKeys` is reset
+  // on every memoryQuery change above.
+  async function revealMemoryKey(key: string) {
+    try {
+      const fresh = await fetchMemory(key, true);
+      setMemories((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          memories: prev.memories.map((m) => (m.key === key ? fresh : m)),
+        };
+      });
+      setRevealedKeys((prev) => new Set(prev).add(key));
+    } catch {
+      // Reveal failure leaves the redacted form in place — engineer can
+      // retry. Intentionally no UI surfacing beyond that.
     }
   }
 
@@ -749,6 +978,12 @@ function App() {
             Gas Town {townStatus?.healthy ? '●' : '○'}
           </button>
           <button
+            className={`tab ${viewMode === 'memories' ? 'active' : ''}`}
+            onClick={() => setViewMode('memories')}
+          >
+            Memories ({memories?.count ?? 0})
+          </button>
+          <button
             className={`tab ${viewMode === 'triage' ? 'active' : ''}`}
             onClick={() => setViewMode('triage')}
           >
@@ -779,6 +1014,16 @@ function App() {
 
       {viewMode === 'gastown' && (
         <TownView town={town} status={townStatus} molecules={molecules} convoys={convoys} />
+      )}
+
+      {viewMode === 'memories' && (
+        <MemoryPanel
+          data={memories}
+          revealedKeys={revealedKeys}
+          onRevealKey={revealMemoryKey}
+          onSearch={setMemoryQuery}
+          query={memoryQuery}
+        />
       )}
 
       {viewMode === 'triage' && (

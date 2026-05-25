@@ -306,6 +306,48 @@ export async function fetchMolecule(id: string): Promise<Molecule> {
   return res.json();
 }
 
+// Memories — read-only by architectural invariant (Council Q2). The
+// redaction layer runs server-side; clients pass `reveal=true` to get
+// the raw content. UI bins should NEVER persist a reveal across
+// reloads — that's per 005-PP-POLICY § 4.
+
+export interface Memory {
+  key: string;
+  content: string;
+  redacted?: boolean;
+  redaction_markers?: string[];
+}
+
+export interface MemoriesResponse {
+  memories: Memory[];
+  count: number;
+  schema_version: number;
+}
+
+export async function fetchMemories(reveal = false): Promise<MemoriesResponse> {
+  const q = reveal ? '?reveal=true' : '';
+  const res = await fetch(`${API_BASE}/memories${q}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function fetchMemory(key: string, reveal = false): Promise<Memory> {
+  const q = reveal ? '?reveal=true' : '';
+  const res = await fetch(`${API_BASE}/memories/${encodeURIComponent(key)}${q}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function searchMemories(query: string, reveal = false): Promise<MemoriesResponse> {
+  const params = new URLSearchParams();
+  if (query) params.set('q', query);
+  if (reveal) params.set('reveal', 'true');
+  const qs = params.toString();
+  const res = await fetch(`${API_BASE}/memories/search${qs ? '?' + qs : ''}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
 // Dolt sync state — header pill (council Q0 Surface 2).
 // Health is the derived UI color; bind the pill to this field, not to
 // running/remotes directly. See internal/model/sync.go for the rule.

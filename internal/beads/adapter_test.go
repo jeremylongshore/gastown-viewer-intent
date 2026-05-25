@@ -191,6 +191,120 @@ func TestCLIAdapterBDNotFound(t *testing.T) {
 	}
 }
 
+func TestMemories_EmptyShape(t *testing.T) {
+	mock := NewMockExecutor()
+	mock.SetResponse("memories --json", []byte(`{"schema_version": 1}`))
+	adapter := NewCLIAdapterWithExecutor("", mock)
+
+	resp, err := adapter.Memories(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Count != 0 {
+		t.Errorf("Count: got %d, want 0", resp.Count)
+	}
+	if resp.SchemaVersion != 1 {
+		t.Errorf("SchemaVersion: got %d, want 1", resp.SchemaVersion)
+	}
+	if resp.Memories == nil {
+		t.Error("Memories should be non-nil empty slice")
+	}
+}
+
+func TestMemories_Populated(t *testing.T) {
+	mock := NewMockExecutor()
+	mock.SetResponse("memories --json",
+		[]byte(`{"schema_version": 1, "auth-jwt": "auth uses JWT", "dolt-phantoms": "phantom DBs hide..."}`))
+	adapter := NewCLIAdapterWithExecutor("", mock)
+
+	resp, err := adapter.Memories(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Count != 2 {
+		t.Errorf("Count: got %d, want 2", resp.Count)
+	}
+	// Sorted alphabetically.
+	if resp.Memories[0].Key != "auth-jwt" || resp.Memories[1].Key != "dolt-phantoms" {
+		t.Errorf("unexpected order: %v", resp.Memories)
+	}
+}
+
+func TestMemory_KeyMatch(t *testing.T) {
+	mock := NewMockExecutor()
+	// bd memories <key> --json filters by content; we then pick by key.
+	mock.SetResponse("memories auth-jwt --json",
+		[]byte(`{"schema_version": 1, "auth-jwt": "auth uses JWT"}`))
+	adapter := NewCLIAdapterWithExecutor("", mock)
+
+	m, err := adapter.Memory(context.Background(), "auth-jwt")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Key != "auth-jwt" {
+		t.Errorf("Key: got %q, want auth-jwt", m.Key)
+	}
+	if m.Content != "auth uses JWT" {
+		t.Errorf("Content: got %q, want 'auth uses JWT'", m.Content)
+	}
+}
+
+func TestMemory_NotFound(t *testing.T) {
+	mock := NewMockExecutor()
+	mock.SetResponse("memories ghost --json", []byte(`{"schema_version": 1}`))
+	adapter := NewCLIAdapterWithExecutor("", mock)
+
+	_, err := adapter.Memory(context.Background(), "ghost")
+	if err == nil {
+		t.Fatal("expected NotFoundError")
+	}
+	if !IsNotFoundError(err) {
+		t.Errorf("expected NotFoundError, got %T: %v", err, err)
+	}
+}
+
+func TestMemory_EmptyKeyRejected(t *testing.T) {
+	mock := NewMockExecutor()
+	adapter := NewCLIAdapterWithExecutor("", mock)
+	_, err := adapter.Memory(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error on empty key")
+	}
+	if !IsNotFoundError(err) {
+		t.Errorf("expected NotFoundError, got %T: %v", err, err)
+	}
+}
+
+func TestSearchMemories_Query(t *testing.T) {
+	mock := NewMockExecutor()
+	mock.SetResponse("memories dolt --json",
+		[]byte(`{"schema_version": 1, "dolt-phantoms": "phantom DBs hide..."}`))
+	adapter := NewCLIAdapterWithExecutor("", mock)
+
+	resp, err := adapter.SearchMemories(context.Background(), "dolt")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Count != 1 || resp.Memories[0].Key != "dolt-phantoms" {
+		t.Errorf("unexpected response: %+v", resp)
+	}
+}
+
+func TestSearchMemories_EmptyQueryListsAll(t *testing.T) {
+	mock := NewMockExecutor()
+	mock.SetResponse("memories --json",
+		[]byte(`{"schema_version": 1, "a": "x", "b": "y"}`))
+	adapter := NewCLIAdapterWithExecutor("", mock)
+
+	resp, err := adapter.SearchMemories(context.Background(), "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Count != 2 {
+		t.Errorf("Count: got %d, want 2", resp.Count)
+	}
+}
+
 // TestDoltSyncState_GreenServerAllRemotesOk is the happy-path canary for the
 // header sync pill: dolt server running + every remote reports "ok" →
 // health=green. JSON shapes captured from real bd 1.0.4 output 2026-05-24.

@@ -2,6 +2,7 @@ package beads
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 	"time"
 
@@ -221,6 +222,61 @@ func ParseVersion(data []byte) string {
 	}
 	// Fallback: return trimmed output
 	return s
+}
+
+// ParseMemories turns `bd memories --json` (or its search variant) output
+// into a sorted slice of Memory entries. bd emits a flat JSON object where
+// `schema_version` is a sentinel field and every other key is a memory
+// identifier mapped to its content string:
+//
+//	{
+//	  "schema_version": 1,
+//	  "dolt-phantoms": "phantom DBs hide in three places...",
+//	  "auth-jwt": "auth module uses JWT not sessions"
+//	}
+//
+// The empty case is `{"schema_version": 1}` with no other keys.
+//
+// Sorting by key gives the UI stable ordering across polls. The Memory
+// entries returned have Redacted=false and no markers; the redaction
+// layer (internal/api/memoryredact.go) populates those fields before the
+// response is serialized.
+func ParseMemories(data []byte) (memories []model.Memory, schemaVersion int, err error) {
+	memories = []model.Memory{} // always non-nil — UI binds without null guards
+	if len(data) == 0 {
+		return memories, 0, nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, 0, err
+	}
+	for key, val := range raw {
+		if key == "schema_version" {
+			if uerr := json.Unmarshal(val, &schemaVersion); uerr != nil {
+				// Fall through — a malformed schema_version doesn't
+				// invalidate the memory entries themselves.
+				schemaVersion = 0
+			}
+			continue
+		}
+		var content string
+		if uerr := json.Unmarshal(val, &content); uerr != nil {
+			// Skip non-string values defensively — future bd schema
+			// could include richer per-memory objects; we surface only
+			// the legacy string form until that schema is documented.
+			continue
+		}
+		memories = append(memories, model.Memory{Key: key, Content: content})
+	}
+	sortMemoriesByKey(memories)
+	return memories, schemaVersion, nil
+}
+
+// sortMemoriesByKey sorts memories by ascending key so the UI sees a
+// stable alphabetical order across polls; ordering by content would be
+// unstable (content can change in place via `bd remember --key`).
+func sortMemoriesByKey(m []model.Memory) {
+	sort.Slice(m, func(i, j int) bool { return m[i].Key < m[j].Key })
 }
 
 // rawDoltStatus mirrors the JSON shape returned by `bd dolt status --json`.
