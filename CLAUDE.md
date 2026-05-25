@@ -79,3 +79,35 @@ bd ready              # Show unblocked issues
 bd blocked            # Show dependency graph
 bd show <id>          # View issue details
 ```
+
+## Doc-Quality Gates (Phase 2 pre-flight, 2026-05-23)
+
+CI workflow `.github/workflows/doc-quality.yml` runs four gates on every PR
+that touches `**/*.md` or the gate configs:
+
+| Gate | Tool | Config | Local invocation |
+|---|---|---|---|
+| Markdown lint | `markdownlint-cli2` (web devDep) | `.markdownlint-cli2.jsonc` | `make markdownlint` |
+| Frontmatter + filename | `scripts/validate-frontmatter.py` (Python stdlib) | inline regex | `make frontmatter` |
+| Prose style | Vale 3.7.1 | `.vale.ini` (Microsoft + write-good packages) | `vale 000-docs` (CI uses `errata-ai/vale-action@reviewdog`) |
+| Link check | lychee | `lychee.toml` | `lychee --config lychee.toml '**/*.md'` (CI uses `lycheeverse/lychee-action@v2`) |
+
+The frontmatter validator enforces the Document Filing Standard v4.3
+(`NNN-CC-ABCD-description.ext` for project docs; `000-CC-ABCD-...` for canonical
+cross-repo standards). Legacy `NNN-XXX-` (pre-v4) and `6767-` (v4.2) prefixes
+emit warnings — they are scheduled for renaming in the janitorial sweep but
+don't block the gate today.
+
+**Test-enforcement harness** — `@intentsolutions/audit-harness` is installed as
+a web/ devDep. Hash manifest at `.harness-hash` (initially empty; will
+be populated when `tests/TESTING.md` ships in the closeout bead).
+`make audit-harness-verify` runs the manifest check locally.
+
+**Architectural invariant (Phase 2 council decision Q2):** the `bd memories`
+panel is **read-only-forever**. No `POST/PUT/PATCH/DELETE` endpoints under
+`/api/v1/memories/*`. The bd CLI is the canonical writer; the viewer Edit
+affordance shells out to `bd remember <id>` or copies the command to clipboard.
+This is documented in `THREAT_MODEL.md` (lands in `gastown-hu4` bead).
+
+See `000-docs/004-AT-DECR-gastown-viewer-option-b-council-2026-05-23.md` for
+the full council decision record.

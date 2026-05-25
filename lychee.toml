@@ -1,0 +1,31 @@
+cache = true
+max_cache_age = "1d"
+no_progress = true
+include_verbatim = false
+
+exclude_path = [
+  "node_modules",
+  "web/node_modules",
+  "web/dist",
+  "dist",
+  "internal/api/web_dist",
+  "bin",
+  ".audit-harness",
+  ".beads",
+]
+
+# Honor offline-first nature of the dashboard; localhost links are expected.
+exclude = [
+  "^https?://localhost",
+  "^https?://127\\.0\\.0\\.1",
+  "^http://intentsolutions",
+]
+
+accept = [200, 206, 301, 302, 304, 308, 401, 403, 429]
+timeout = 20
+retry_wait_time = 2
+max_retries = 2
+max_concurrency = 8
+
+# GitHub rate-limits unauthenticated; provide token via GITHUB_TOKEN in CI.
+github_token = ""

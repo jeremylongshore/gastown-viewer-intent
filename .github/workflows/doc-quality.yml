@@ -1,0 +1,84 @@
+name: doc-quality
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '**/*.md'
+      - '.markdownlint-cli2.jsonc'
+      - '.vale.ini'
+      - 'lychee.toml'
+      - 'scripts/validate-frontmatter.py'
+      - '.github/workflows/doc-quality.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - '**/*.md'
+      - '.markdownlint-cli2.jsonc'
+      - '.vale.ini'
+      - 'lychee.toml'
+      - 'scripts/validate-frontmatter.py'
+      - '.github/workflows/doc-quality.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  markdownlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+      - name: Install web deps (provides markdownlint-cli2)
+        working-directory: web
+        run: npm ci
+      - name: Run markdownlint-cli2 on repo
+        run: web/node_modules/.bin/markdownlint-cli2 "**/*.md" "#node_modules" "#web/node_modules"
+
+  frontmatter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate frontmatter + filing-standard pattern
+        run: python3 scripts/validate-frontmatter.py 000-docs
+
+  vale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Vale
+        uses: errata-ai/vale-action@reviewdog
+        with:
+          version: 3.7.1
+          files: '000-docs README.md CLAUDE.md'
+          reporter: github-pr-check
+          fail_on_error: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  lychee:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore lychee cache
+        uses: actions/cache@v4
+        with:
+          path: .lycheecache
+          key: cache-lychee-${{ github.sha }}
+          restore-keys: cache-lychee-
+      - name: Lychee link check
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --config lychee.toml --cache --no-progress './**/*.md'
+          fail: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
