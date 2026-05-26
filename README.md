@@ -1,4 +1,4 @@
-# gastown-viewer-intent v0.5.0
+# gastown-viewer-intent v0.6.0
 
 > Local-first Mission Control dashboard for Beads + Gas Town, with a read-only-forever memory panel.
 
@@ -6,60 +6,67 @@
 [![Release](https://img.shields.io/github/v/release/jeremylongshore/gastown-viewer-intent)](https://github.com/jeremylongshore/gastown-viewer-intent/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**Links:** [Gist One-Pager](https://gist.github.com/jeremylongshore/cd5d24298d05140eca8a3ef2cb2773f3) · [GitHub](https://github.com/jeremylongshore/gastown-viewer-intent) · [v0.5.0 Release](https://github.com/jeremylongshore/gastown-viewer-intent/releases/tag/v0.5.0)
+**Links:** [Gist One-Pager](https://gist.github.com/jeremylongshore/cd5d24298d05140eca8a3ef2cb2773f3) · [GitHub](https://github.com/jeremylongshore/gastown-viewer-intent) · [v0.6.0 Release](https://github.com/jeremylongshore/gastown-viewer-intent/releases/tag/v0.6.0) · [CHANGELOG](CHANGELOG.md)
 
-## What's New in v0.5.0 (Phase 2 — Option B-minus)
+## What's New in v0.6.0 (TUI Tier-1)
 
-Targeted daily-value refresh per the
-[2026-05-23 Council Decision Record](000-docs/004-AT-DECR-gastown-viewer-option-b-council-2026-05-23.md).
-Three new read-only surfaces, hardened daemon binding, and a memory
-classification policy.
+Foundation refactor of the terminal client (`gvi-tui`) plus two new
+read-only tabs that bring the TUI to parity with the web UI's Phase 2
+surfaces. No daemon changes — the TUI remains a thin HTTP client; the
+daemon at `localhost:7070` continues to own all `bd`/`gt` shelling.
 
-### Memories panel (read-only, with redaction)
+### Registry-driven keybindings
 
-- `bd memories` surfaced in a new **Memory** tab with search.
-- Per-card **Reveal** button — does NOT persist across navigation, per
-  the [classification policy](000-docs/005-PP-POLICY-memories-classification-2026-05-24.md).
-- Partner-name and secret-pattern strings are redacted by default
-  (`kobiton`, `nixtla`, `mudit`, `polygon`, `lit`, `elm` + token prefixes
-  `sk-`, `ghp_`, `AKIA`, `glpat-`, etc.).
-- `Copy 'bd recall <key>'` button for terminal passthrough — the bd CLI
-  remains the canonical writer (Council Q2 architectural invariant: no
-  POST routes under `/api/v1/memories/*`).
+- A single `KeyRegistry` feeds both the dispatcher and the help overlay,
+  so help cannot drift from the bindings the TUI actually responds to.
+  Adopted from the [Dicklesworthstone/beads_viewer](https://github.com/Dicklesworthstone/beads_viewer)
+  reference repo.
+- `Focus` enum replaces the binary `View` toggle: **Board · Memories ·
+  Triage · Detail**. `Update()` routes through `Dispatch(focus, key)`
+  so every binding declares the focus it applies to.
+- Combo-key state machine: `gg` jumps to top of column, `G` jumps to
+  bottom. 250 ms pending-key window via `tea.Tick`.
+- Help overlay (`?`) groups bindings by category (Navigation / Tabs /
+  Actions / Global), filtered by current focus.
 
-### Dolt sync widget (header pill)
+### Memories tab (read-only, daemon-redacted)
 
-- Live status of the local dolt server + remotes via `bd dolt status`.
-- Pill color: green (synced) / yellow (remote degraded) / red (server
-  down) / gray (unknown).
-- Tooltip shows remote count and any error from bd.
+- New Memories tab reachable via `2` or `m`. Lists `bd memories` with
+  the daemon's 005-PP-POLICY redaction already applied; redacted entries
+  show a `[redacted]` marker and the classification class.
+- `/` triggers server-side substring search via
+  `/api/v1/memories/search?q=…`.
+- `enter` expands the selected memory; a `Copy bd recall <key>` hint
+  surfaces the canonical reveal path. **Reveal is intentionally NOT
+  exposed in the TUI** — Council Q2 read-only-forever invariant says the
+  bd CLI is the canonical writer / revealer.
 
-### Human triage queue (read-only)
+### Triage tab (read-only)
 
-- Lists every bead carrying the `human` label — issues an AI agent or
-  automation flagged for human decision.
-- Read-only view. `respond` / `dismiss` actions ship in a later release
-  behind the auth-token gate (see `THREAT_MODEL.md`).
-
-### Daemon hardening
-
-- `gvid` refuses to bind any non-loopback address by default; the loopback
-  check rejects `0.0.0.0`, `::`, private LAN, link-local, and any
-  hostname other than `localhost`.
-- Origin header allowlist rejects cross-origin requests at the middleware
-  layer (defense against DNS rebinding and CSRF from any tab on the dev
-  box).
-- 256-bit session token generated on every daemon start, persisted to
-  `~/.config/gvid/token` (mode 0600). Required by future state-changing
-  endpoints; read-only endpoints still work for native clients without
-  the token.
+- New Triage tab reachable via `3` or `t`. Lists every bead carrying the
+  `human` label from `/api/v1/human`.
+- `enter` reuses the existing Board issue-detail fetch — reviewers land
+  on the same detail screen they already know.
 
 ### Foundation fixes
 
-- `bd defer --until <date>` now round-trips — the date is preserved as
-  `model.Issue.DeferredUntil` instead of being dropped on the floor.
-- Molecules now read from `gt wisps list --json` (gt 0.9 surface)
-  instead of the retired `<workDir>/.beads/molecule.json` file.
+- HTTP client status check: `Memories`, `SearchMemories`, and
+  `HumanFlags` now reject non-200 responses with a readable error before
+  attempting JSON decode (shared `decodeJSON` helper).
+- UTF-8 rune-safe truncation across 4 sites — board card titles, issue
+  descriptions, memory previews, triage row titles. Previously byte
+  slicing could split a multi-byte codepoint and emit malformed bytes.
+- TUI dispatcher releases its `RWMutex` read lock before invoking
+  handlers, mirroring `DispatchCombo`'s order; closes a latent deadlock
+  if a future handler re-enters the registry.
+- `gvi-tui` version is now injected by goreleaser ldflags
+  (`-X main.version=…`) — previously every release binary reported
+  `0.1.0` regardless of tag.
+
+### Previous highlights (v0.5.0)
+
+Phase 2 (Option B-minus): daemon hardening, read-only memories panel,
+triage queue, sync pill. See [v0.5.0 in CHANGELOG](CHANGELOG.md#v050---2026-05-23) for the full list.
 
 ### Previous highlights (v0.4.0)
 

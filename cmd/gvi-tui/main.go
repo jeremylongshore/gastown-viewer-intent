@@ -11,7 +11,10 @@ import (
 	"github.com/intent-solutions-io/gastown-viewer-intent/internal/tui"
 )
 
-const version = "0.1.0"
+// version is the binary's reported version. The dev default is "dev";
+// release builds inject the tag via goreleaser ldflags
+// (-X main.version={{.Version}}) — see .goreleaser.yaml.
+var version = "dev"
 
 func main() {
 	apiURL := flag.String("api", "http://localhost:7070", "API server URL")

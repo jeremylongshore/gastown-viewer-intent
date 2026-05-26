@@ -36,6 +36,7 @@ builds:
       - arm64
     ldflags:
       - -s -w
+      - -X main.version={{.Version}}
 
 archives:
   - id: default
