@@ -45,6 +45,15 @@ backup/
 *.db-shm
 db.sqlite
 bd.db
+# bd 1.0.4 required exclusions (added per `bd doctor` 2026-05-26)
+.env
+export-state.json
+embeddeddolt/
+daemon.*
+*.lock
+*.corrupt.backup/
+.beads-credential-key
+
 # NOTE: Do NOT add negation patterns here.
 # They would override fork protection in .git/info/exclude.
 # Config files (metadata.json, config.yaml) are tracked by git by default

@@ -1,5 +1,12 @@
 # CLAUDE.md
 
+<!-- bd-doctor-divergence: ok -->
+<!-- AGENTS.md and CLAUDE.md intentionally serve different audiences:
+     AGENTS.md is generic agent/bd onboarding (any harness); CLAUDE.md
+     is Claude-specific project architecture, build commands, and
+     doc-quality gates. The divergence is by design — bd doctor's
+     "Agent Doc Divergence" warning is opted out here. -->
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview

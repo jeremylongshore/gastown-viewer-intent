@@ -76,3 +76,6 @@ dist/
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+
+# bd credential key (per bd 1.0.4; never commit)
+.beads-credential-key
