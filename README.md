@@ -129,8 +129,8 @@ go install github.com/intent-solutions-io/gastown-viewer-intent/cmd/gvid@latest
 
 ### Prerequisites
 
-- [Beads](https://github.com/steveyegge/beads) (`bd` CLI in `$PATH`).
-- [Gas Town](https://github.com/steveyegge/gastown) installed at `~/gt`
+- [Beads](https://github.com/gastownhall/beads) (`bd` CLI in `$PATH`).
+- [Gas Town](https://github.com/gastownhall/gastown) installed at `~/gt`
   (optional — the dashboard works without it; the Gas Town tab simply
   reports the town as absent).
 
@@ -312,7 +312,7 @@ MIT — see `LICENSE`.
 
 ## Related projects
 
-- [Gastown](https://github.com/steveyegge/gastown) — multi-agent
+- [Gastown](https://github.com/gastownhall/gastown) — multi-agent
   workspace orchestrator.
-- [Beads](https://github.com/steveyegge/beads) — local-first issue
+- [Beads](https://github.com/gastownhall/beads) — local-first issue
   tracking with dependencies.
