@@ -15,7 +15,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.22'
+          go-version-file: go.mod
 
       - name: Ensure web_dist stub for go:embed
         run: mkdir -p internal/api/web_dist && test -f internal/api/web_dist/index.html || echo '<!DOCTYPE html><html><body>stub</body></html>' > internal/api/web_dist/index.html
@@ -34,7 +34,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.22'
+          go-version-file: go.mod
 
       - name: Ensure web_dist stub for go:embed
         run: mkdir -p internal/api/web_dist && test -f internal/api/web_dist/index.html || echo '<!DOCTYPE html><html><body>stub</body></html>' > internal/api/web_dist/index.html
