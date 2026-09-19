@@ -10,12 +10,12 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: '1.22'
+          go-version-file: go.mod
 
       - name: Ensure web_dist stub for go:embed
         run: mkdir -p internal/api/web_dist && test -f internal/api/web_dist/index.html || echo '<!DOCTYPE html><html><body>stub</body></html>' > internal/api/web_dist/index.html
@@ -29,20 +29,25 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: '1.22'
+          go-version-file: go.mod
 
       - name: Ensure web_dist stub for go:embed
         run: mkdir -p internal/api/web_dist && test -f internal/api/web_dist/index.html || echo '<!DOCTYPE html><html><body>stub</body></html>' > internal/api/web_dist/index.html
 
+      # golangci-lint-action has no node24 release below v9, and v9 only runs
+      # golangci-lint v2, whose stricter defaults report 18 findings here that
+      # v1 does not. Keep the v1 generation this repo was passing (pinned to its
+      # final release, no longer `latest`) and install it without the action.
+      # Follow-up: migrate to golangci-lint v2 and fix or configure its findings.
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+          "$(go env GOPATH)/bin/golangci-lint" run
 
   web:
     runs-on: ubuntu-latest
@@ -50,10 +55,10 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'
