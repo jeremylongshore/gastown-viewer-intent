@@ -471,9 +471,9 @@ func (m Model) viewIssue() string {
 	case model.StatusBlocked:
 		sStyle = statusBlocked
 	}
-	b.WriteString(fmt.Sprintf("%s  %s\n\n",
+	fmt.Fprintf(&b, "%s  %s\n\n",
 		sStyle.Render(string(m.issue.Status)),
-		labelStyle.Render(fmt.Sprintf("[%s]", m.issue.Priority))))
+		labelStyle.Render(fmt.Sprintf("[%s]", m.issue.Priority)))
 
 	b.WriteString(labelStyle.Render("ID: ") + m.issue.ID + "\n\n")
 
@@ -492,14 +492,14 @@ func (m Model) viewIssue() string {
 	if len(m.issue.Blocks) > 0 {
 		b.WriteString(labelStyle.Render("Blocks:\n"))
 		for _, dep := range m.issue.Blocks {
-			b.WriteString(fmt.Sprintf("  - %s (%s)\n", dep.Title, dep.ID))
+			fmt.Fprintf(&b, "  - %s (%s)\n", dep.Title, dep.ID)
 		}
 		b.WriteString("\n")
 	}
 	if len(m.issue.BlockedBy) > 0 {
 		b.WriteString(labelStyle.Render("Blocked by:\n"))
 		for _, dep := range m.issue.BlockedBy {
-			b.WriteString(fmt.Sprintf("  - %s (%s)\n", dep.Title, dep.ID))
+			fmt.Fprintf(&b, "  - %s (%s)\n", dep.Title, dep.ID)
 		}
 		b.WriteString("\n")
 	}

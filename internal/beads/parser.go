@@ -63,14 +63,15 @@ func (bi *BDIssue) ToModelIssue() model.Issue {
 
 	// Map dependencies to BlockedBy (things this issue depends on)
 	for _, dep := range bi.Dependencies {
-		if dep.DepType == "blocks" {
+		switch dep.DepType {
+		case "blocks":
 			issue.BlockedBy = append(issue.BlockedBy, model.IssueSummary{
 				ID:       dep.ID,
 				Title:    dep.Title,
 				Status:   mapStatus(dep.Status),
 				Priority: mapPriority(dep.Priority),
 			})
-		} else if dep.DepType == "parent-child" {
+		case "parent-child":
 			issue.Parent = &model.IssueSummary{
 				ID:       dep.ID,
 				Title:    dep.Title,
@@ -82,14 +83,15 @@ func (bi *BDIssue) ToModelIssue() model.Issue {
 
 	// Map dependents to Blocks (things that depend on this issue)
 	for _, dep := range bi.Dependents {
-		if dep.DepType == "blocks" {
+		switch dep.DepType {
+		case "blocks":
 			issue.Blocks = append(issue.Blocks, model.IssueSummary{
 				ID:       dep.ID,
 				Title:    dep.Title,
 				Status:   mapStatus(dep.Status),
 				Priority: mapPriority(dep.Priority),
 			})
-		} else if dep.DepType == "parent-child" {
+		case "parent-child":
 			issue.Children = append(issue.Children, model.IssueSummary{
 				ID:       dep.ID,
 				Title:    dep.Title,

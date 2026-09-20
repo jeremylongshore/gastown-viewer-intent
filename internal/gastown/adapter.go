@@ -617,11 +617,12 @@ func latestActivity(dir string, now time.Time) time.Duration {
 // LastActivity returns the last modification time of agent's workspace.
 func (a *FSAdapter) LastActivity(rigName, agentName string) time.Time {
 	var checkPath string
-	if agentName == "witness" {
+	switch agentName {
+	case "witness":
 		checkPath = filepath.Join(a.townRoot, rigName, "witness")
-	} else if agentName == "refinery" {
+	case "refinery":
 		checkPath = filepath.Join(a.townRoot, rigName, "refinery")
-	} else {
+	default:
 		checkPath = filepath.Join(a.townRoot, rigName, "polecats", agentName)
 		if !a.dirExists(checkPath) {
 			checkPath = filepath.Join(a.townRoot, rigName, "crew", agentName)

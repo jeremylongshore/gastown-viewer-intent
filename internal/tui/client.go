@@ -43,7 +43,7 @@ func (c *Client) Health() (*HealthResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connection failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -70,7 +70,7 @@ func (c *Client) Board() (*BoardResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connection failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -91,7 +91,7 @@ func (c *Client) Issue(id string) (*model.Issue, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connection failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, fmt.Errorf("issue not found: %s", id)
@@ -116,7 +116,7 @@ func (c *Client) Issue(id string) (*model.Issue, error) {
 // readable status line instead of a confusing JSON-unmarshal error
 // against an error envelope.
 func decodeJSON(resp *http.Response, out any) error {
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		// Best-effort: include the response body if it's short enough

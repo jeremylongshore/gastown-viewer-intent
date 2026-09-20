@@ -53,13 +53,12 @@ func (m Model) viewTriage() string {
 		}
 		title := truncateRunes(f.Title, maxLen)
 
-		b.WriteString(fmt.Sprintf("%s %s  %s  %s  %s\n",
+		fmt.Fprintf(&b, "%s %s  %s  %s  %s\n",
 			marker,
 			idStyle.Render(f.ID),
 			sStyle.Render(string(f.Status)),
 			labelStyle.Render(fmt.Sprintf("[%s]", f.Priority)),
-			title,
-		))
+			title)
 	}
 
 	return b.String()
