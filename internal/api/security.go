@@ -80,8 +80,9 @@ func (t *SessionToken) Persist(path string) (string, error) {
 	}
 	tmpPath := tmp.Name()
 	if err := os.Chmod(tmpPath, 0o600); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
+		// Best-effort cleanup: the error being returned is the one that matters.
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("chmod temp token: %w", err)
 	}
 	// Write the raw token only — no trailing newline. Clients that read the
@@ -90,16 +91,17 @@ func (t *SessionToken) Persist(path string) (string, error) {
 	// confusingly. extractToken applies TrimSpace defensively, but the
 	// canonical file format is the bare hex string.
 	if _, err := tmp.WriteString(t.raw); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
+		// Best-effort cleanup: the error being returned is the one that matters.
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("write temp token: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath) // best-effort cleanup
 		return "", fmt.Errorf("close temp token: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath) // best-effort cleanup
 		return "", fmt.Errorf("rename temp token to %s: %w", path, err)
 	}
 	// Final mode enforcement in case umask interfered with the temp file.

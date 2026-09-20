@@ -33,7 +33,7 @@ func (s *Server) serveStaticFiles() {
 		// Check if the file exists in the embedded FS
 		cleanPath := strings.TrimPrefix(r.URL.Path, "/")
 		if f, err := sub.Open(cleanPath); err == nil {
-			f.Close()
+			_ = f.Close() // existence probe only; the file server reopens it
 			fileServer.ServeHTTP(w, r)
 			return
 		}

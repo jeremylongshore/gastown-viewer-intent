@@ -135,7 +135,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	defer s.sse.Unsubscribe(client)
 
 	// Send initial connection event
-	fmt.Fprintf(w, "event: connected\ndata: {\"message\":\"Connected to Gastown Viewer Intent\"}\n\n")
+	// A failed first write means the client already went away; there is nothing to stream to.
+	if _, err := fmt.Fprintf(w, "event: connected\ndata: {\"message\":\"Connected to Gastown Viewer Intent\"}\n\n"); err != nil {
+		return
+	}
 	flusher.Flush()
 
 	// Listen for events or client disconnect

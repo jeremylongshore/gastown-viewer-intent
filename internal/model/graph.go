@@ -16,8 +16,8 @@ const (
 	EdgeTypeChild     EdgeType = "child"
 
 	// Async coordination
-	EdgeTypeWaitsFor  EdgeType = "waits_for"
-	EdgeTypeWaitedBy  EdgeType = "waited_by"
+	EdgeTypeWaitsFor    EdgeType = "waits_for"
+	EdgeTypeWaitedBy    EdgeType = "waited_by"
 	EdgeTypeConditional EdgeType = "conditional_blocks"
 
 	// Relationship types
@@ -147,22 +147,22 @@ func (g *Graph) ToDOT() string {
 			color = "#6b7280" // gray default
 		}
 		label := strings.ReplaceAll(node.Title, "\"", "\\\"")
-		b.WriteString(fmt.Sprintf("  \"%s\" [label=\"%s\", fillcolor=\"%s\", style=\"filled,rounded\"];\n",
-			node.ID, label, color))
+		fmt.Fprintf(&b, "  \"%s\" [label=\"%s\", fillcolor=\"%s\", style=\"filled,rounded\"];\n",
+			node.ID, label, color)
 	}
 
 	b.WriteString("\n")
 
 	// Define edge styles by type
 	edgeStyles := map[EdgeType]string{
-		EdgeTypeBlocks:      "color=\"#ef4444\", penwidth=2",           // red, thick
-		EdgeTypeBlockedBy:   "color=\"#ef4444\", style=dashed",         // red, dashed
-		EdgeTypeParent:      "color=\"#6b7280\", style=dashed",         // gray, dashed
-		EdgeTypeChild:       "color=\"#6b7280\", style=dotted",         // gray, dotted
-		EdgeTypeWaitsFor:    "color=\"#f97316\", style=dashed",         // orange, dashed
-		EdgeTypeConditional: "color=\"#a855f7\", style=dashed",         // purple, dashed
-		EdgeTypeRelates:     "color=\"#3b82f6\", style=dotted",         // blue, dotted
-		EdgeTypeImplements:  "color=\"#22c55e\", style=bold",           // green, bold
+		EdgeTypeBlocks:      "color=\"#ef4444\", penwidth=2",   // red, thick
+		EdgeTypeBlockedBy:   "color=\"#ef4444\", style=dashed", // red, dashed
+		EdgeTypeParent:      "color=\"#6b7280\", style=dashed", // gray, dashed
+		EdgeTypeChild:       "color=\"#6b7280\", style=dotted", // gray, dotted
+		EdgeTypeWaitsFor:    "color=\"#f97316\", style=dashed", // orange, dashed
+		EdgeTypeConditional: "color=\"#a855f7\", style=dashed", // purple, dashed
+		EdgeTypeRelates:     "color=\"#3b82f6\", style=dotted", // blue, dotted
+		EdgeTypeImplements:  "color=\"#22c55e\", style=bold",   // green, bold
 	}
 
 	// Write edges
@@ -171,8 +171,8 @@ func (g *Graph) ToDOT() string {
 		if style == "" {
 			style = "color=\"#9ca3af\""
 		}
-		b.WriteString(fmt.Sprintf("  \"%s\" -> \"%s\" [%s, label=\"%s\"];\n",
-			edge.From, edge.To, style, edge.Type))
+		fmt.Fprintf(&b, "  \"%s\" -> \"%s\" [%s, label=\"%s\"];\n",
+			edge.From, edge.To, style, edge.Type)
 	}
 
 	b.WriteString("}\n")

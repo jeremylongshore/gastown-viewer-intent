@@ -3,6 +3,9 @@
     "default": true,
     "MD013": false,
     "MD024": { "siblings_only": true },
+    // Filed docs carry a front-matter `title:` AND a body H1; without this the rule counts the
+    // title as a second top-level heading.
+    "MD025": { "front_matter_title": "" },
     "MD033": { "allowed_elements": ["br", "details", "summary", "sub", "sup", "kbd"] },
     "MD041": false,
     "MD046": { "style": "fenced" },

@@ -39,15 +39,13 @@ jobs:
       - name: Ensure web_dist stub for go:embed
         run: mkdir -p internal/api/web_dist && test -f internal/api/web_dist/index.html || echo '<!DOCTYPE html><html><body>stub</body></html>' > internal/api/web_dist/index.html
 
-      # golangci-lint-action has no node24 release below v9, and v9 only runs
-      # golangci-lint v2, whose stricter defaults report 18 findings here that
-      # v1 does not. Keep the v1 generation this repo was passing (pinned to its
-      # final release, no longer `latest`) and install it without the action.
-      # Follow-up: migrate to golangci-lint v2 and fix or configure its findings.
+      # golangci-lint v2 through the official action (v9 is its first node24 release). The
+      # linter version is pinned so a new release cannot turn an untouched branch red;
+      # configuration lives in .golangci.yml.
       - name: golangci-lint
-        run: |
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
-          "$(go env GOPATH)/bin/golangci-lint" run
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
 
   web:
     runs-on: ubuntu-latest
